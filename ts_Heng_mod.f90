@@ -1,9 +1,12 @@
 !!!
-! Elspeth KH Lee - May 2021
-! Two-stream method following Heng et al. papers
-! We follow the Malik et al. (2017) method using sub-layers to calculate midpoint fluxes
-! Pros: Easy to understand and convert from theory, no mu integration, variable diffusive factor
-! Cons: Slower than other methods (uses sub-layers and eone calculations), no scattering
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Dec 2021 : adding method & Bezier interpolation
+! sw: Adding layer method with scattering
+! lw: Two-stream method following Heng et al. papers
+!     We follow the Malik et al. (2017) method using sub-layers to calculate midpoint fluxes
+!     Pros: Easy to understand and convert from theory, no mu integration, variable diffusive factor
+!     Cons: Slower than other methods (uses sub-layers and eone calculations), no scattering
+!     NOTE: Various ways to calculate the diffusion factor as function of optical depth
 !!!
 
 module ts_Heng_mod

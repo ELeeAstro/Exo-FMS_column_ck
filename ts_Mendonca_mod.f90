@@ -1,8 +1,10 @@
 !!!
-! Elspeth KH Lee - May 2021
-! Two-stream method following Mendonca et al. methods used for Venus
-! IN DEVELOPMENT - USE WITH UTMOST CAUTION, YOU WILL GET WRONG ANSWERS
-!
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Dec 2021 : adding method & Bezier interpolation
+! sw: Adding layer method with scattering
+! lw: Two-stream method following the Mendonca methods
+!     Pros: Very fast
+!     Cons: Innaccurate at high optical depth
 !!!
 
 module ts_Mendonca_mod

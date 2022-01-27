@@ -1,10 +1,12 @@
 !!!
-! Elspeth KH Lee - May 2021
-! Two-stream method following a simplified Toon method (Toon et al. 1989)
-! This is the method in the no-scattering limit (pure absorption - w0 = 0).
-! Based on the CHIMERA code by Mike Line, but cleaned up slightly
-! Pros: Fast, accurate at high optical depths, well used and familiar method
-! Cons: No scattering
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Dec 2021 : adding method & Bezier interpolation
+! sw: Adding layer method with scattering
+! lw: Two-stream method following a simplified Toon method (Toon et al. 1989)
+!     This is the method in the no-scattering limit (pure absorption - w0 = 0).
+!     Based on the CHIMERA code by Mike Line, but cleaned up slightly
+!     Pros: Fast, accurate at high optical depths, well used and familiar method
+!     Cons: No scattering
 !!!
 
 module ts_Toon_mod

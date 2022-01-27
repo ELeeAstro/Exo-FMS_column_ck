@@ -16,7 +16,7 @@ program Exo_FMS_RC
   use ts_isothermal_mod, only : ts_isothermal
   ! use ts_isothermal_2_mod, only : ts_isothermal_2
   ! use ts_Toon_mod, only : ts_Toon
-  ! use ts_Toon_scatter_mod, only : ts_Toon_scatter
+  use ts_Toon_scatter_mod, only : ts_Toon_scatter
   ! use ts_Heng_mod, only : ts_Heng
   use ts_short_char_mod, only : ts_short_char
   ! use ts_Lewis_scatter_mod, only : ts_Lewis_scatter
@@ -56,7 +56,7 @@ program Exo_FMS_RC
   real(dp), allocatable, dimension(:) :: dT_rad, dT_conv, net_F
   real(dp), allocatable, dimension(:) :: gw
   real(dp), allocatable, dimension(:) :: wl_e, wn_e
-  real(dp) :: olr
+  real(dp) :: olr, asr
 
   integer :: nsp
   character(len=50) :: VMR_tab_sh
@@ -235,7 +235,8 @@ program Exo_FMS_RC
 
     select case(opac_scheme)
     case('ck')
-      do k = 1, nlay
+
+       do k = 1, nlay
         call ck_opacity(n_ck, n_CIA, n_Ray, nb, ng, wl_e, Tl(k), pl(k), mu(k), nsp, sp_list(:), VMR(:,k), &
         & k_l(:,:,k), ssa(:,:,k), gg(:,:,k))
       end do
@@ -254,7 +255,7 @@ program Exo_FMS_RC
     select case(ts_scheme)
     case('Isothermal')
       ! Isothermal layers approximation
-      call ts_isothermal(nlay, nlev, nb, ng, gw, wn_e, Tl, tau_e, ssa, gg, mu_z, Finc, Tint, olr, net_F)
+      call ts_isothermal(nlay, nlev, nb, ng, gw, wn_e, Tl, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     case('Isothermal_2')
       ! Isothermal layers approximation - first order fix for high optical depths
       !call ts_isothermal_2(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR,  net_F)
@@ -262,13 +263,11 @@ program Exo_FMS_RC
       ! Toon method without scattering
       !call ts_Toon(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR, net_F)
     case("Toon_scatter")
-      !! In development !!
       ! Toon method with scattering
-      !call ts_Toon_scatter(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB,  Beta_V, Beta_IR, &
-      !& sw_a, sw_g, lw_a, lw_g, net_F)
+      call ts_Toon_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     case('Shortchar')
       ! Short characteristics method without scattering
-      call ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, olr, net_F)
+      call ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     case('Heng')
       ! Heng flux method without scattering
       !do b = 1, 2
@@ -284,7 +283,7 @@ program Exo_FMS_RC
       !call ts_Lewis_scatter(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB,  Beta_V, Beta_IR, &
       !& sw_a, sw_g, lw_a, lw_g, net_F, 2)
     case('Disort_scatter')
-      call ts_disort_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, olr, net_F)
+      call ts_disort_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     case('Mendonca')
       ! Mendonca method without scattering
       !call ts_Mendonca(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR, net_F)
@@ -345,6 +344,9 @@ program Exo_FMS_RC
 
   print*, 'OLR [W m-2]:'
   print*, olr
+
+  print*, 'ASR [W m-2]:'
+  print*, asr
 
   print*, 'Outputting results: '
   open(newunit=uu,file='FMS_RC_pp.out', action='readwrite')

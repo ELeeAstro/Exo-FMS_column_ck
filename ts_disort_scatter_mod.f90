@@ -1,8 +1,9 @@
 !!!
-! Elspeth KH Lee - May 2021
-! Two-stream DISORT version, modified by Xianyu Tan to include an internal heat source.
-! Pros: Stable, performs accurate scattering calculations tried and tested, reliable model.
-! Cons: Slower than other methods.
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Dec 2021 : Bezier interpolation
+! sw/lw: Two-stream DISORT version, modified by Xianyu Tan to include an internal heat source.
+!        Pros: Stable, performs accurate scattering calculations tried and tested, reliable model.
+!        Cons: Slower than other methods.
 !!!
 
 module ts_disort_scatter_mod
@@ -18,7 +19,7 @@ module ts_disort_scatter_mod
 contains
 
   subroutine ts_disort_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, &
-    & olr, net_F)
+    & net_F, olr, asr)
     implicit none
 
     !! Input variables
@@ -33,8 +34,9 @@ contains
     real(dp), intent(in) :: mu_z, Tint
 
     !! Output variables
+    real(dp), intent(out) :: olr, asr
     real(dp), dimension(nlev), intent(out) :: net_F
-    real(dp), intent(out) :: olr
+
 
     !! Work variables
     integer :: i, b, g
@@ -51,7 +53,7 @@ contains
     real(dp), dimension(maxulv) :: sw_net, lw_net
     real(dp), dimension(nb,maxulv) :: sw_net_b, lw_net_b
     real(dp), dimension(ng,maxulv) :: sw_net_g, lw_net_g
-    real(dp) :: umu0, fbeam
+    real(dp) :: umu0, fbeam, olr_g
     logical :: planck
 
     !! Find temperature at layer edges through interpolation and extrapolation
@@ -107,6 +109,7 @@ contains
     fbeam = 0.0_dp
     umu0 = 1.0_dp
     lw_net(:) = 0.0_dp
+    olr = 0.0_dp
     do b = 1, nb
       lw_net_b(b,:) = 0.0_dp
       wvnmlo = wn_e(b+1)
@@ -118,8 +121,9 @@ contains
         do i = 1, nlay
           dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
         end do
-        call CALL_TWOSTR (nlay,Te,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,lw_net_g(g,:))
+        call CALL_TWOSTR (nlay,Te,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,lw_net_g(g,:),olr_g)
         lw_net_b(b,:) = lw_net_b(b,:) + lw_net_g(g,:) * gw(g)
+        olr = olr + olr_g * gw(g)
       end do
       lw_net(:) = lw_net(:) + lw_net_b(b,:)
     end do
@@ -127,7 +131,8 @@ contains
     !! Net fluxes at each level
     net_F(:) = lw_net(1:nlev) + sw_net(1:nlev)
 
-    olr = 0.0_dp
+    !! Set asr = 0 for now, need to figure out how to calculate correctly
+    asr = 0.0_dp
 
   end subroutine ts_disort_scatter
 

@@ -34,7 +34,6 @@ LFLAGS    = $(FFLAGS)
 
 # ts_isothermal_2_mod.o \
 # ts_Toon_mod.o \
-# ts_Toon_scatter_mod.o \
 # ts_Heng_mod.o \
 # ts_short_char_mod.o \
 # ts_Lewis_scatter_mod.o \
@@ -52,6 +51,7 @@ OBJECTS = \
 	  ts_isothermal_mod.o \
 	  ts_short_char_mod.o \
 	  ts_disort_scatter_mod.o \
+          ts_Toon_scatter_mod.o \
     FMS_RC.o
 
 # executable statement

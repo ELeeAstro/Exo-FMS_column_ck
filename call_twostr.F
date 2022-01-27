@@ -25,7 +25,7 @@
 !     |* ftp://climate1.gsfc.nasa.gov/wiscombe/Multiple_Scatt/TWOSTR/
 
       SUBROUTINE CALL_TWOSTR(nlyr,temper,gg,ssalb,dtauc,ntau,utau,
-     $     planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,fnetup)
+     $     planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,fnetup,olr)
 
       IMPLICIT NONE
       INTEGER maxcly
@@ -40,7 +40,7 @@
       REAL*8 gg(maxcly),ssalb(maxcly),dtauc(maxcly)
       REAL*8 fbeam,umu0,Tint,wvnmlo,wvnmhi
 !     ------------------ OUTPUT VARIABLES ----------------
-      REAL*8 fnetup(maxulv)
+      REAL*8 fnetup(maxulv), olr
 
 !     ------------------ LOCAL VARIABLES -----------------
       LOGICAL :: quiet = .true.
@@ -83,6 +83,8 @@
       do i = 1,ntau
          fnetup(i) = flup(i) - rfldir(i) - rfldn(i)
       enddo
+
+      olr = flup(1)
 
          DO ierr = 1, nerr
             IF ( ierror(ierr) .NE. 0 ) THEN

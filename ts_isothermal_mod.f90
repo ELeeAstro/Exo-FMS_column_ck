@@ -30,7 +30,7 @@ module ts_isothermal_mod
 
 contains
 
-  subroutine ts_isothermal(nlay, nlev, nb, ng, gw, wn_e, Tl, tau_e, ssa, gg, mu_z, Finc, Tint, olr, net_F)
+  subroutine ts_isothermal(nlay, nlev, nb, ng, gw, wn_e, Tl, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     implicit none
 
     !! Input variables
@@ -44,7 +44,7 @@ contains
     real(dp), intent(in) :: mu_z, Tint
 
     !! Output variables
-    real(dp), intent(out) :: olr
+    real(dp), intent(out) :: olr, asr
     real(dp), dimension(nlev), intent(out) :: net_F
 
     !! Work variables
@@ -102,6 +102,9 @@ contains
 
     !! Output olr
     olr = lw_up(1)
+
+    !! Output asr
+    asr = sw_down(1) - sw_up(1)
 
   end subroutine ts_isothermal
 

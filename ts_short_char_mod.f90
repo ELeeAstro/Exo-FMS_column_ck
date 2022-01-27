@@ -1,9 +1,11 @@
 !!!
-! Elspeth KH Lee - May 2021
-! Two-stream method following the short characteristics method (e.g. Helios-r2: Kitzmann et al. 2018)
-! Uses the method of short characteristics (Olson & Kunasz 1987) with linear interpolants.
-! Pros: Very fast, accurate at high optical depths, very stable
-! Cons: No scattering
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Oct 2021 : adding method & Bezier interpolation
+! sw: Adding layer method with scattering
+! lw: Two-stream method following the short characteristics method (e.g. Helios-r2: Kitzmann et al. 2018)
+!     Uses the method of short characteristics (Olson & Kunasz 1987) with linear interpolants.
+!     Pros: Very fast, accurate at high optical depths, very stable
+!     Cons: No lw scattering
 !!!
 
 module ts_short_char_mod
@@ -68,7 +70,7 @@ module ts_short_char_mod
 contains
 
   subroutine ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, &
-    & olr, net_F)
+    & net_F, olr, asr)
     implicit none
 
     !! Input variables
@@ -83,7 +85,7 @@ contains
     real(dp), intent(in) :: mu_z, Tint
 
     !! Output variables
-    real(dp), intent(out) :: olr
+    real(dp), intent(out) :: olr, asr
     real(dp), dimension(nlev), intent(out) :: net_F
 
     !! Work variables
@@ -132,11 +134,9 @@ contains
         do g = 1, ng
           call sw_grey_updown_adding(nlay, nlev, Finc(b), tau_e(g,b,:), mu_z, ssa(g,b,:), gg(g,b,:), a_surf, &
           & sw_down_g(g,:), sw_up_g(g,:))
-          !call sw_grey_down(nlev, Finc(b), tau_e(g,b,:), mu_z, sw_down_g(g,:))
           sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
           sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
         end do
-        !print*, b, sw_down_b(b,:)
         sw_down(:) = sw_down(:) + sw_down_b(b,:)
         sw_up(:) = sw_up(:) + sw_up_b(b,:)
       end do
@@ -172,6 +172,9 @@ contains
 
     !! Output olr
     olr = lw_up(1)
+
+    !! Output asr
+    asr = sw_down(1) - sw_up(1)
 
   end subroutine ts_short_char
 
@@ -224,8 +227,6 @@ contains
       end do
 
   end subroutine BB_integrate
-
-
 
   subroutine lw_grey_updown_linear(nlay, nlev, be, be_int, tau_IRe, lw_up, lw_down)
     implicit none

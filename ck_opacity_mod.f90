@@ -114,7 +114,6 @@ module ck_opacity_mod
 
 contains
 
-  !
   subroutine ck_opacity(n_ck, n_CIA, n_Ray, n_b, n_g, wl_in, T_in, p_in, mu_in, n_sp, sp_list, VMR, &
     & k_tot, a_tot, g_tot)
     implicit none
@@ -177,7 +176,7 @@ contains
         !print*, b, k_ck_sp(b,:)
         !print*, b, 'RO'
         if (premix .eqv. .False.) then
-          call random_overlap(n_ck, n_g, n_sp, Nl, RH, VMR(:), k_ck_sp(:,:), k_ck(:))
+            call random_overlap(n_ck, n_g, n_sp, Nl, RH, VMR(:), k_ck_sp(:,:), k_ck(:))
         else
           k_ck(:) = k_ck_sp(1,:)
           !print*, b, k_ck(:)
@@ -271,7 +270,6 @@ contains
         allocate(iwn(n_CIA,n_b), iwn1(n_CIA,n_b))
       end if
       do s = 1, n_CIA
-        !print*, s, CIA(s)%sp, CIA(s)%wn(:)
         if ((trim(CIA(s)%sp) == 'H-') .or. (CIA(s)%form == 2)) then
           cycle
         end if
@@ -570,6 +568,7 @@ contains
     real(kind=dp) :: dum1r
     real(kind=dp), allocatable, dimension(:) :: wl_dum
 
+    integer :: nset
     integer :: stat
 
     character(len=10) :: name
@@ -786,16 +785,16 @@ contains
           open(newunit=u,file=trim(CIA(s)%path),action='read',status='old')
 
           ! Allocate CIA table temperature arrays
-          allocate(CIA(s)%T(CIA(s)%nT))
+          allocate(CIA(s)%T(nset))
 
           ! Read and allocate data until error (end of file)
-          do n = 1, CIA(s)%nT
+          do n = 1, nset
             read(u,*,iostat=stat) name, wn_s, wn_e, nrec, temp_r, kmax, dum
             !print*, n, name, wn_s, wn_e, nrec, temp_r, kmax, dum
             if (n == 1) then
               ! Allocate CIA table wn and table value array
               allocate(CIA(s)%wn(nrec))
-              allocate(CIA(s)%kap(nrec,CIA(s)%nT))
+              allocate(CIA(s)%kap(nrec,nset))
               CIA(s)%nwl = nrec
             end if
             ! Check if end of file reached
