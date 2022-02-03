@@ -48,7 +48,7 @@ table_num = 2
 &sp_nml
 
 !Burrows species list
-sp_list = 'H2', 'He', 'H2O','CH4','CO', 'N2', 'NH3'
+sp_list = 'H2', 'He', 'H2O', 'CH4','CO', 'N2', 'NH3'
 
 /
 
@@ -61,11 +61,14 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 
 &ck_nml
 
-premix = .False.
+PM = .False.
+RORR = .False.
+AEE = .True.
 ck_form = 2, 2, 2, 2
-ck_sp =  'H2O', 'CH4', 'CO', 'NH3'
-ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
-'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt'
+ck_sp = 'H2O','CH4', 'CO', 'NH3'
+ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
+'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt',
+
 
 /
 

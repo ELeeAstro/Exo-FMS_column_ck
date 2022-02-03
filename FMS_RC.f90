@@ -216,7 +216,7 @@ program Exo_FMS_RC
     case('Interp')
       do k = 1, nlay
         call CE_interpolate(pl(k)/1e5_dp,Tl(k),sp_list(:),nsp,VMR_tab_sh,VMR(:,k),mu(k))
-        !print*, Tl(k), pl(k), mu(k), VMR(:,k)
+        !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
       end do
     case('Min')
       do k = 1, nlay
@@ -236,10 +236,10 @@ program Exo_FMS_RC
     select case(opac_scheme)
     case('ck')
 
-       do k = 1, nlay
-        call ck_opacity(n_ck, n_CIA, n_Ray, nb, ng, wl_e, Tl(k), pl(k), mu(k), nsp, sp_list(:), VMR(:,k), &
-        & k_l(:,:,k), ssa(:,:,k), gg(:,:,k))
-      end do
+       !do k = 1, nlay
+        call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), nsp, sp_list(:), VMR(:,:), &
+        & k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
+      !end do
 
       tau_e(:,:,1) = 0.0_dp
       do k = 1, nlay

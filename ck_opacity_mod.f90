@@ -5,20 +5,20 @@ module ck_opacity_mod
   integer, parameter :: dp = REAL64
 
   !! Common constants
-  real(kind=dp), parameter :: pi = 4.0_dp*atan(1.0_dp)
-  real(kind=dp), parameter :: twopi = 2.0_dp*pi, fourpi = 4.0_dp*pi
-  real(kind=dp), parameter :: half = 1.0_dp/2.0_dp
-  real(kind=dp), parameter :: third = 1.0_dp/3.0_dp, twothird = 2.0_dp/3.0_dp
+  real(dp), parameter :: pi = 4.0_dp*atan(1.0_dp)
+  real(dp), parameter :: twopi = 2.0_dp*pi, fourpi = 4.0_dp*pi
+  real(dp), parameter :: half = 1.0_dp/2.0_dp
+  real(dp), parameter :: third = 1.0_dp/3.0_dp, twothird = 2.0_dp/3.0_dp
 
-  real(kind=dp), parameter :: amu = 1.66053906660e-24_dp
-  real(kind=dp), parameter :: amu_cgs = amu
-  real(kind=dp), parameter :: sb  = 5.670374419e-8_dp
-  real(kind=dp), parameter :: kb = 1.380649e-16_dp
-  real(kind=dp), parameter :: kb_cgs = kb
-  real(kind=dp), parameter :: R_gas = 8.31446261815324_dp
-  real(kind=dp), parameter :: hp = 6.62607015e-34_dp
-  real(kind=dp), parameter :: c_s = 2.99792458e8_dp
-  real(kind=dp), parameter :: kb_si = 1.380649e-23_dp
+  real(dp), parameter :: amu = 1.66053906660e-24_dp
+  real(dp), parameter :: amu_cgs = amu
+  real(dp), parameter :: sb  = 5.670374419e-8_dp
+  real(dp), parameter :: kb = 1.380649e-16_dp
+  real(dp), parameter :: kb_cgs = kb
+  real(dp), parameter :: R_gas = 8.31446261815324_dp
+  real(dp), parameter :: hp = 6.62607015e-34_dp
+  real(dp), parameter :: c_s = 2.99792458e8_dp
+  real(dp), parameter :: kb_si = 1.380649e-23_dp
 
   type ck_table
 
@@ -82,11 +82,11 @@ module ck_opacity_mod
 
   logical :: first_call = .True.
   integer :: n_wl, n_b, n_g
-  real(kind=dp), allocatable, dimension(:) :: wl_e, wl, wn_e, wn, freq
+  real(dp), allocatable, dimension(:) :: wl_e, wl, wn_e, wn, freq
   character(len=250) :: wl_path
 
   ! CK table data - read in pre-calculated cm2 molecule-1 k-coefficents for each band
-  logical :: premix
+  logical :: PM, RORR, AEE
   integer :: n_ck
   integer, allocatable, dimension(:) :: ck_form
   type(ck_table), allocatable, dimension(:) :: ck
@@ -107,40 +107,43 @@ module ck_opacity_mod
   character(len=10), allocatable, dimension(:) :: Ray_sp
   character(len=250), allocatable, dimension(:) :: Ray_paths
 
-  namelist /ck_nml/ premix, ck_sp, ck_paths, ck_form
+  namelist /ck_nml/ PM, RORR, AEE, ck_sp, ck_paths, ck_form
   namelist /CIA_nml/ CIA_sp, CIA_paths, CIA_form
   namelist /Ray_nml/ Ray_sp, Ray_paths, Ray_form
 
 
 contains
 
-  subroutine ck_opacity(n_ck, n_CIA, n_Ray, n_b, n_g, wl_in, T_in, p_in, mu_in, n_sp, sp_list, VMR, &
+  subroutine ck_opacity(nlay, n_ck, n_CIA, n_Ray, n_b, n_g, wl_in, grav_in, T_in, p_in, pe_in, mu_in, n_sp, sp_list, VMR, &
     & k_tot, a_tot, g_tot)
     implicit none
 
     ! What's required as input is the layer T, P, VMR
-    integer, intent(in) :: n_ck, n_CIA, n_Ray, n_sp, n_b, n_g
+    integer, intent(in) :: nlay, n_ck, n_CIA, n_Ray, n_sp, n_b, n_g
     character(len=10), dimension(n_sp), intent(in) :: sp_list
-    real(kind=dp), intent(in) :: T_in, p_in, mu_in
+    real(dp), intent(in) :: grav_in
+    real(dp), dimension(nlay), intent(in) :: T_in, p_in, mu_in
+    real(dp), dimension(nlay+1), intent(in) :: pe_in
     real(dp), dimension(n_b+1), intent(in) :: wl_in
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), dimension(n_g,n_b), intent(out) :: k_tot, a_tot, g_tot
+    real(dp), dimension(n_sp, nlay), intent(in) :: VMR
+    real(dp), dimension(n_g,n_b,nlay), intent(out) :: k_tot, a_tot, g_tot
 
-    integer :: b, g, u_nml
-    real(kind=dp), allocatable, dimension(:,:), save :: k_ck_sp
-    real(kind=dp), allocatable, dimension(:), save :: k_ck
-    real(kind=dp) :: k_cont, k_Ray
+    integer :: b, g, u_nml, k
+    real(dp), allocatable, dimension(:,:,:), save :: k_ck_sp
+    real(dp), allocatable, dimension(:,:), save :: k_ck
+    real(dp), dimension(nlay) :: k_cont, k_Ray
 
-    real(kind=dp) :: Tl, pl, Nl, RH, mu
+    real(dp) :: grav
+    real(dp), dimension(nlay) :: Tl, pl, Nl, RH, mu
+    real(dp), dimension(nlay+1) :: pe
 
     logical, save :: first_call = .True.
-
 
     if (first_call .eqv. .True.) then
       call read_gas_data(n_ck, n_CIA, n_Ray, n_sp, n_b, sp_list)
       !! Read input variables from namelist
-      allocate(k_ck_sp(n_ck,n_g))
-      allocate(k_ck(n_g))
+      allocate(k_ck_sp(n_ck,n_g,nlay))
+      allocate(k_ck(n_g,nlay))
 
       ! Find wavelength centers and wavenumbers, freq etc
       allocate(wl_e(n_b+1), wl(n_b), wn_e(n_b+1), wn(n_b), freq(n_b))
@@ -151,19 +154,20 @@ contains
         wn(b) = 1.0_dp/(wl(b) * 1.0e-4_dp)
         freq(b) = c_s / (wl(b) * 1.0e-6_dp)
       end do
-      wl_e(n_b) = wl_in(n_b)
-      wn_e(n_b) = 1.0_dp/(wl_in(n_b) * 1.0e-4_dp)
+      wl_e(n_b+1) = wl_in(n_b+1)
+      wn_e(n_b+1) = 1.0_dp/(wl_in(n_b+1) * 1.0e-4_dp)
 
       first_call = .False.
     end if
 
     ! Keep everything in CGS units - p in bar
-
-    Tl = T_in
-    pl = P_in/1e5_dp
-    mu = mu_in
-    Nl = (pl*1e6_dp) / (kb_cgs * Tl)
-    RH = (pl*1e6_dp * mu * amu_cgs) / (kb_cgs * Tl)
+    grav = grav_in*100.0_dp ! gravity in cm s-2
+    Tl(:) = T_in(:)
+    pe(:) = pe_in(:)*10.0_dp ! pe in dyne
+    pl(:) = p_in(:)/1e5_dp
+    mu(:) = mu_in(:)
+    Nl(:) = (pl(:)*1e6_dp) / (kb_cgs * Tl(:))
+    RH(:) = (pl(:)*1e6_dp * mu(:) * amu_cgs) / (kb_cgs * Tl(:))
 
     ! Loop through each band - we follow various recipes from a mix of CMCRT, CHIMERA and NASA AMES
     do b = 1, n_b
@@ -171,34 +175,47 @@ contains
       ! First, bi-linearly interp each species k-tables to mid point T and P
       ! Then perform k-coefficent mixing (Random overlap)
       if (n_ck > 0) then
+
         !print*, b, 'ck_interp'
-        call interp_ck_sp_TP(n_ck, n_g, Tl, pl, b, k_ck_sp(:,:))
-        !print*, b, k_ck_sp(b,:)
-        !print*, b, 'RO'
-        if (premix .eqv. .False.) then
-            call random_overlap(n_ck, n_g, n_sp, Nl, RH, VMR(:), k_ck_sp(:,:), k_ck(:))
-        else
-          k_ck(:) = k_ck_sp(1,:)
-          !print*, b, k_ck(:)
+        do k = 1, nlay
+          call interp_ck_sp_TP(n_ck, n_g, Tl(k), pl(k), b, k_ck_sp(:,:,k))
+        end do
+
+        if (RORR .eqv. .True.) then
+          !print*, b, 'RO'
+          do k = 1, nlay
+            call random_overlap(n_ck, n_g, n_sp, Nl(k), RH(k), VMR(:,k), k_ck_sp(:,:,k), k_ck(:,k))
+          end do
+        else if (AEE .eqv. .True.) then
+          !print*, b, 'AEE'
+          call adap_equiv_extinction(nlay, n_ck, n_g, n_sp, wl(b), grav, &
+          &  pe(:), Tl(:), Nl(:), RH(:), VMR(:,:), k_ck_sp(:,:,:), k_ck(:,:))
+        else if (PM .eqv. .True.) then
+          !print*, b, 'PM'
+          k_ck(:,:) = k_ck_sp(1,:,:)
         end if
       else
-        k_ck(:) = 0.0_dp
+        k_ck(:,:) = 0.0_dp
       end if
 
       ! Second, interp to find  continuum opacity
       if (n_CIA > 0) then
         !print*, b, 'conti'
-        call interp_conti(n_CIA, n_sp, n_b, Tl, Nl, RH, b, VMR(:), k_cont)
+        do k = 1, nlay
+          call interp_conti(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+        end do
       else
-        k_cont = 0.0_dp
+        k_cont(:) = 0.0_dp
       end if
 
       ! Third, calculate Rayleigh scattering
       if (n_Ray > 0) then
         !print*, b, 'Ray'
-        call calc_Rayleigh(n_Ray, n_sp, b, Nl, RH, VMR(:), k_Ray)
+        do k = 1, nlay
+          call calc_Rayleigh(n_Ray, n_sp, b, Nl(k), RH(k), VMR(:,k), k_Ray(k))
+        end do
       else
-        k_Ray = 0.0_dp
+        k_Ray(:) = 0.0_dp
       end if
 
       ! Fourth, aerosol opacity
@@ -206,179 +223,117 @@ contains
 
       ! Find total values for each g ordinate
       do g = 1, n_g
-         k_tot(g,b) = k_ck(g) + k_cont + k_Ray !+ k_cl_ext(b)  ! Total extinction
-         a_tot(g,b) = min(k_Ray/k_tot(g,b),0.99_dp) !(k_Ray + k_cl_sca(b)) / k_tot(b,g)           ! Effective single scattering albedo
-         g_tot(g,b) = 0.0_dp !(g_cl(b)*k_cl_sca(b)) / (k_cl_sca(b) + k_Ray) ! Effective asymmetry factor
+         k_tot(g,b,:) = k_ck(g,:) + k_cont(:) + k_Ray(:) !+ k_cl_ext(b)  ! Total extinction
+         a_tot(g,b,:) = min(k_Ray(:)/k_tot(g,b,:),0.99_dp) !(k_Ray + k_cl_sca(b)) / k_tot(b,g)           ! Effective single scattering albedo
+         g_tot(g,b,:) = 0.0_dp !(g_cl(b)*k_cl_sca(b)) / (k_cl_sca(b) + k_Ray) ! Effective asymmetry factor
       end do
-      !write(u2,*) wl(b), k_tot(b,:)!k_ck(:)
-      ! write(u1,*) wl(b), k_cont, k_Ray
       !print*, b, k_ck(1), k_ck(8), k_Ray, k_cont, a_tot(b,1) , a_tot(b,8)
     end do
 
     ! MKS conversion
-    k_tot(:,:) = k_tot(:,:) * 0.1_dp
+    k_tot(:,:,:) = k_tot(:,:,:) * 0.1_dp
 
     !stop
 
   end subroutine ck_opacity
 
-  subroutine calc_Rayleigh(n_Ray, n_sp, b, Nl, RH, VMR, k_Ray)
+  subroutine adap_equiv_extinction(nlay, n_ck, n_g, n_sp, wl_in, grav, pe, Tl, Nl, RH, VMR, k_ck_sp, k_ck)
     implicit none
 
-    integer, intent(in) :: b, n_Ray, n_sp
-    real(kind=dp), intent(in) :: Nl, RH
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), intent(out) :: k_Ray
+    integer, intent(in) :: nlay, n_ck, n_g, n_sp
+    real(dp), intent(in) :: grav, wl_in
+    real(dp), dimension(nlay), intent(in) :: Tl, Nl, RH
+    real(dp), dimension(nlay+1), intent(in) :: pe
+    real(dp), dimension(n_sp,nlay), intent(in) :: VMR
+    real(dp), dimension(n_ck,n_g,nlay), intent(in) :: k_ck_sp
 
-    integer :: s
+    real(dp), dimension(n_g,nlay), intent(out) :: k_ck
 
-    ! For Rayleigh scattering we just need the pre-tabulated cross section
-    ! in cm2 molecule-1 for each Rayleigh scattering species in this band.
-    ! The only process that affects the strength of Rayleigh scattering is
-    ! changes in the VMR and local total number density
+    integer :: k, s, g
+    integer, dimension(n_ck) :: max_idx
+    real(dp) :: top, bot, dpe, tau_tot, tau_s, tau_all
+    real(dp), dimension(nlay) :: bl
+    real(dp), dimension(n_ck,nlay) :: k_av
+    real(dp), dimension(n_ck) :: tau_av
+    logical, dimension(n_ck) :: major
 
-    k_Ray = 0.0_dp
-    do s = 1, n_Ray
-      k_Ray = k_Ray + VMR(Ray(s)%iVMR) * Ray(s)%kap(b)
-      !print*, s, b, k_Ray, VMR(Ray(s)%iVMR), Ray(s)%kap(b)
-    end do
-    k_Ray = k_Ray * Nl / RH
-
-  end subroutine calc_Rayleigh
-
-  subroutine interp_conti(n_CIA, n_sp, n_b,  T, N, RH, b, VMR, k_cont)
-    implicit none
-
-    integer, intent(in) :: b, n_CIA, n_sp, n_b
-    real(kind=dp), intent(in) :: T, N, RH
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), intent(out) :: k_cont
-
-    integer, allocatable, dimension(:,:), save :: iwn, iwn1
-    logical, save :: f_call = .True.
-
-    integer :: s
-    integer :: iT, iT1
-    real(kind=dp) :: k_Hm, k_ff
-    real(kind=dp) :: x0, x1, y0, y1, xval, yval
-    real(kind=dp) :: a00, a01, a10, a11, aval
-
-    ! If this is the first call, find the wavenumber index numbers
-    ! so we don't have to calculate them each time
-    if (f_call .eqv. .True.) then
-      if (allocated(iwn) .eqv. .False.) then
-        allocate(iwn(n_CIA,n_b), iwn1(n_CIA,n_b))
-      end if
-      do s = 1, n_CIA
-        if ((trim(CIA(s)%sp) == 'H-') .or. (CIA(s)%form == 2)) then
-          cycle
-        end if
-        call locate(CIA(s)%wn(:),wn(b),iwn(s,b))
-        iwn1(s,b) = iwn(s,b) + 1
-        !print*, wn(b), iwn(s,b), iwn1(s,b), CIA(s)%wn(iwn(s,b)), CIA(s)%wn(iwn1(s,b))
+    !! Calculate average kappa in for each species in each layer for thermal component
+    !! First just try a general non-weighted average 
+    !! - seems a good compromise for both stellar and thermal components
+    do s = 1, n_ck
+      do k = 1, nlay
+        !bl(k) = BB(wl_in, Tl(k))
+        top = 0.0_dp
+        bot = 0.0_dp
+        do g = 1, n_g
+          top = top + ck(s)%Gw(g)*k_ck_sp(s,g,k) !*bl(k)
+          bot = bot + ck(s)%Gw(g) !*bl(k)
+        end do
+        k_av(s,k) = top/bot * (VMR(ck(s)%iVMR,k) * Nl(k) / RH(k))
       end do
-      if (b == n_b) then
-        f_call = .False.
-      end if
-    end if
-
-    k_cont = 0.0_dp
-    do s = 1, n_CIA
-
-      if (trim(CIA(s)%sp) == 'H-') then
-        call CIA_Hminus(n_sp, s, b, T, N, VMR, k_Hm)
-        k_cont = k_cont + k_Hm
-        cycle
-      end if
-      if (CIA(s)%form == 2) then
-        call CIA_ff(n_sp, s, b, T, N, VMR, k_ff)
-        k_cont = k_cont + k_ff
-        !print*, s, b, k_ff
-        cycle
-      end if
-
-      ! If band is outside table wavelength range
-      if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
-        cycle
-      end if
-
-      ! Locate required T indexes in CIA wn array for layer temperature
-      call locate(CIA(s)%T(:),T,iT)
-      iT1 = iT + 1
-
-      !! Perform temperature edge case check
-      if (iT < 1) then
-        ! Temperature of layer is outside lower bounds of table
-        ! Perform wn linear interp to minval(T)
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        y0 = CIA(s)%kap(iwn(s,b),1) ; y1 = CIA(s)%kap(iwn1(s,b),1)
-
-        ! Perform log linear interpolation
-        call linear_interp(xval, x0, x1, y0, y1, yval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + yval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      else if (iT1 > CIA(s)%nT) then
-
-        ! Temperature of layer is outside upper bounds of table
-        ! Perform wn linear interp to maxval(T)
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        y0 = CIA(s)%kap(iwn(s,b),CIA(s)%nT) ; y1 = CIA(s)%kap(iwn1(s,b),CIA(s)%nT)
-
-        ! Perform log linear interpolation
-        call linear_interp(xval, x0, x1, y0, y1, yval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + yval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      else
-
-        !! wn and T are within the table bounds
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        yval = T ; y0 = CIA(s)%T(iT) ; y1 = CIA(s)%T(iT1)
-        a00 = CIA(s)%kap(iwn(s,b),iT) ; a10 = CIA(s)%kap(iwn1(s,b),iT)
-        a01 = CIA(s)%kap(iwn(s,b),iT1) ; a11 = CIA(s)%kap(iwn1(s,b),iT1)
-
-        ! Perform bi-linear interpolation
-        call bilinear_interp(xval, yval, x0, x1, y0, y1, a00, a10, a01, a11, aval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + aval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      end if
-
     end do
 
-    k_cont = k_cont / RH
+    !! Find the major absorber species
+    !! If we use mean opacity for all species, then using tau is fine
+    !! no need to do the transmission functions
+    tau_av(:) = 0.0_dp
+    tau_tot = 0.0_dp
+    do k = 1, nlay
+      dpe = pe(k+1) - pe(k)
+      do s = 1, n_ck
+        tau_s = (k_av(s,k) * dpe)/grav
+        tau_av(s) = tau_av(s) + tau_s
+      end do
+      tau_all = (sum(k_av(:,k)) * dpe)/grav
+      tau_tot = tau_tot + tau_all
+      !print*, k, pe(k), tau_av(:), tau_tot
+      if (tau_tot >= 1.0_dp) then
+        exit
+      end if
+    end do
 
-  end subroutine interp_conti
+    !! Find species with highest tau_av
+    !! This also checks for the largest tau should the surface be at tau_av < 1
+    max_idx = maxloc(tau_av,dim=1)
+    !print*, max_idx
+    major(:) = .False.
+    major(max_idx(1)) = .True.
+
+    !! Combine the grey average opacities of minor species with the k-coefficents of the major species
+    k_ck(:,:) = 0.0_dp
+    do k = 1, nlay
+      do s = 1, n_ck
+        if (major(s) .eqv. .True.) then
+          ! Combine full k-table
+          k_ck(:,k) = k_ck(:,k) + k_ck_sp(s,:,k) * (VMR(ck(s)%iVMR,k) * Nl(k) / RH(k))
+        else
+          ! Combine average grey value
+          k_ck(:,k) = k_ck(:,k) + k_av(s,k)
+        end if
+      end do
+    end do
+
+  end subroutine adap_equiv_extinction
 
   subroutine random_overlap(n_ck, n_g,  n_sp, N, RH, VMR, k_ck_sp, k_ck)
     implicit none
 
     integer, intent(in) :: n_ck, n_g, n_sp
-    real(kind=dp), intent(in) :: N, RH
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), dimension(n_ck,n_g), intent(in) :: k_ck_sp
-    real(kind=dp), dimension(n_g), intent(out) :: k_ck
+    real(dp), intent(in) :: N, RH
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), dimension(n_ck,n_g), intent(in) :: k_ck_sp
+    real(dp), dimension(n_g), intent(out) :: k_ck
 
     integer :: i, j, g, s, n_g2
-    real(kind=dp) :: VMR_tot, VMR_cum, intg_sum
-    real(kind=dp), dimension(n_g*n_g) :: k_mix, k_mix_sort, logkmix, k_mix_cp
-    real(kind=dp), dimension(n_g*n_g) :: wt_mix, wt_mix_sort
-    real(kind=dp), dimension(0:n_g*n_g) :: intg, x
+    real(dp) :: VMR_tot, VMR_cum, intg_sum
+    real(dp), dimension(n_g*n_g) :: k_mix, k_mix_sort, logkmix, k_mix_cp
+    real(dp), dimension(n_g*n_g) :: wt_mix, wt_mix_sort
+    real(dp), dimension(0:n_g*n_g) :: intg, x
     integer, dimension(n_g*n_g) :: sort_indicies
     integer :: loc
 
     integer :: ix, ix1
-    real(kind=dp) :: xval, x0, x1, y0, y1, yval
+    real(dp) :: xval, x0, x1, y0, y1, yval
 
     !! If 1 ck table, then it's just VMR * ck coefficents
     if (n_ck == 1)then
@@ -386,6 +341,7 @@ contains
       return
     end if
 
+    !! Convolved size
     n_g2 = n_g * n_g
 
     !! Start RO procedure
@@ -446,14 +402,14 @@ contains
     implicit none
 
     integer, intent(in) :: n_ck, n_g, b
-    real(kind=dp), intent(in) :: T, P
-    real(kind=dp), dimension(n_ck,n_g), intent(out) :: k_ck_sp
+    real(dp), intent(in) :: T, P
+    real(dp), dimension(n_ck,n_g), intent(out) :: k_ck_sp
 
     integer :: s, g
     integer :: iT, iT1, iP, iP1
-    real(kind=dp) :: lT, lP
-    real(kind=dp) :: xval, x0, x1, y0, y1, yval, aval
-    real(kind=dp) :: a00, a01, a10, a11
+    real(dp) :: lT, lP
+    real(dp) :: xval, x0, x1, y0, y1, yval, aval
+    real(dp) :: a00, a01, a10, a11
 
     !! A large if block statement is used to determine if the T-p point
     !! is within the ck table, then interpolates.
@@ -554,6 +510,144 @@ contains
 
   end subroutine interp_ck_sp_TP
 
+  subroutine interp_conti(n_CIA, n_sp, n_b, b,  T, N, RH, VMR, k_cont)
+    implicit none
+
+    integer, intent(in) :: b, n_CIA, n_sp, n_b
+    real(dp), intent(in) :: T, N, RH
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(out) :: k_cont
+
+    integer, allocatable, dimension(:,:), save :: iwn, iwn1
+    logical, save :: f_call = .True.
+
+    integer :: s
+    integer :: iT, iT1
+    real(dp) :: k_Hm, k_ff
+    real(dp) :: x0, x1, y0, y1, xval, yval
+    real(dp) :: a00, a01, a10, a11, aval
+
+    ! If this is the first call, find the wavenumber index numbers
+    ! so we don't have to calculate them each time
+    if (f_call .eqv. .True.) then
+      if (allocated(iwn) .eqv. .False.) then
+        allocate(iwn(n_CIA,n_b), iwn1(n_CIA,n_b))
+      end if
+      do s = 1, n_CIA
+        if ((trim(CIA(s)%sp) == 'H-') .or. (CIA(s)%form == 2)) then
+          cycle
+        end if
+        call locate(CIA(s)%wn(:),wn(b),iwn(s,b))
+        iwn1(s,b) = iwn(s,b) + 1
+        !print*, wn(b), iwn(s,b), iwn1(s,b), CIA(s)%wn(iwn(s,b)), CIA(s)%wn(iwn1(s,b))
+      end do
+      if (b == n_b) then
+        f_call = .False.
+      end if
+    end if
+
+    k_cont = 0.0_dp
+    do s = 1, n_CIA
+
+      if (trim(CIA(s)%sp) == 'H-') then
+        call CIA_Hminus(n_sp, s, b, T, N, VMR, k_Hm)
+        k_cont = k_cont + k_Hm
+        cycle
+      end if
+      if (CIA(s)%form == 2) then
+        call CIA_ff(n_sp, s, b, T, N, VMR, k_ff)
+        k_cont = k_cont + k_ff
+        !print*, s, b, k_ff
+        cycle
+      end if
+
+      ! If band is outside table wavelength range
+      if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
+        cycle
+      end if
+
+      ! Locate required T indexes in CIA wn array for layer temperature
+      call locate(CIA(s)%T(:),T,iT)
+      iT1 = iT + 1
+
+      !! Perform temperature edge case check
+      if (iT < 1) then
+        ! Temperature of layer is outside lower bounds of table
+        ! Perform wn linear interp to minval(T)
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        y0 = CIA(s)%kap(iwn(s,b),1) ; y1 = CIA(s)%kap(iwn1(s,b),1)
+
+        ! Perform log linear interpolation
+        call linear_interp(xval, x0, x1, y0, y1, yval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + yval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      else if (iT1 > CIA(s)%nT) then
+
+        ! Temperature of layer is outside upper bounds of table
+        ! Perform wn linear interp to maxval(T)
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        y0 = CIA(s)%kap(iwn(s,b),CIA(s)%nT) ; y1 = CIA(s)%kap(iwn1(s,b),CIA(s)%nT)
+
+        ! Perform log linear interpolation
+        call linear_interp(xval, x0, x1, y0, y1, yval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + yval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      else
+
+        !! wn and T are within the table bounds
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        yval = T ; y0 = CIA(s)%T(iT) ; y1 = CIA(s)%T(iT1)
+        a00 = CIA(s)%kap(iwn(s,b),iT) ; a10 = CIA(s)%kap(iwn1(s,b),iT)
+        a01 = CIA(s)%kap(iwn(s,b),iT1) ; a11 = CIA(s)%kap(iwn1(s,b),iT1)
+
+        ! Perform bi-linear interpolation
+        call bilinear_interp(xval, yval, x0, x1, y0, y1, a00, a10, a01, a11, aval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + aval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      end if
+
+    end do
+
+    k_cont = k_cont / RH
+
+  end subroutine interp_conti
+
+  subroutine calc_Rayleigh(n_Ray, n_sp, b, Nl, RH, VMR, k_Ray)
+    implicit none
+
+    integer, intent(in) :: b, n_Ray, n_sp
+    real(dp), intent(in) :: Nl, RH
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(out) :: k_Ray
+
+    integer :: s
+
+    ! For Rayleigh scattering we just need the pre-tabulated cross section
+    ! in cm2 molecule-1 for each Rayleigh scattering species in this band.
+    ! The only process that affects the strength of Rayleigh scattering is
+    ! changes in the VMR and local total number density
+
+    k_Ray = 0.0_dp
+    do s = 1, n_Ray
+      k_Ray = k_Ray + VMR(Ray(s)%iVMR) * Ray(s)%kap(b)
+      !print*, s, b, k_Ray, VMR(Ray(s)%iVMR), Ray(s)%kap(b)
+    end do
+    k_Ray = k_Ray * Nl / RH
+
+  end subroutine calc_Rayleigh
+
   ! Start up module to read in tables and prepare opacities
   subroutine read_gas_data(n_ck, n_CIA, n_Ray, n_sp, n_b,  sp_list)
     implicit none
@@ -565,15 +659,14 @@ contains
     integer :: n_wlr, ni
 
     integer :: n_T, n_P, n_G, n_Rays
-    real(kind=dp) :: dum1r
-    real(kind=dp), allocatable, dimension(:) :: wl_dum
+    real(dp) :: dum1r
+    real(dp), allocatable, dimension(:) :: wl_dum
 
-    integer :: nset
     integer :: stat
 
     character(len=10) :: name
     integer :: nrec, iwn, iwn1
-    real(kind=dp) :: wn_s, wn_e, temp_r, kmax, dum
+    real(dp) :: wn_s, wn_e, temp_r, kmax, dum
 
     logical :: exists
     integer :: iostat_end
@@ -593,7 +686,7 @@ contains
       ck(:)%path = ck_paths(:)
       ! Find index for VMR
       do s = 1, n_ck
-        if (premix .eqv. .True.) then
+        if (PM .eqv. .True.) then
           cycle
         end if
         exists = .False.
@@ -682,7 +775,7 @@ contains
           allocate(ck(s)%kap(ck(s)%nwl,ck(s)%nT,ck(s)%nP,ck(s)%nG))
           ! Some slight differences between premixed and not premixed opacitiy tables here
           ! Due to GGChem grid ordering in the premixed opacitiy calculation
-          if (premix .eqv. .False.) then
+          if (PM .eqv. .False.) then
             do i = 1, ck(s)%nT
               do j = 1, ck(s)%nP
                 do b = ck(s)%nwl, 1, -1
@@ -693,7 +786,7 @@ contains
                 end do
               end do
             end do
-          else if (premix .eqv. .True.) then
+          else if (PM .eqv. .True.) then
             do i = 1, ck(s)%nP
               do j = 1, ck(s)%nT
                 do b = ck(s)%nwl, 1, -1
@@ -714,7 +807,6 @@ contains
 
     if (n_CIA > 0) then
 
-
       !! read in ck data and prep
       allocate(CIA_sp(n_CIA), CIA_paths(n_CIA), CIA(n_CIA), CIA_form(n_CIA))
 
@@ -725,52 +817,53 @@ contains
       CIA(:)%path = CIA_paths(:)
       CIA(:)%form = CIA_form(:)
 
-    ! Find the CIA constituents from lookup table
-    call find_CIA_consituents(n_CIA)
+      ! Find the CIA constituents from lookup table
+      call find_CIA_consituents(n_CIA)
 
-    do s = 1, n_CIA
+      do s = 1, n_CIA
 
-      ! Check for 3 species special
-      if (CIA(s)%i3 .eqv. .True.) then
-        ni = 3
-      else
-        ni = 2
-      end if
-
-      do i = 1, ni
-        exists = .False.
-        do j = 1, n_sp
-          if (ni == 2) then
-            if (CIA(s)%sp_con(i) == sp_list(j)) then
-              CIA(s)%iVMR(i) = j
-              exists = .True.
-              exit
-            end if
-          else if (ni == 3) then
-            if (CIA(s)%sp_con_3(i) == sp_list(j)) then
-              CIA(s)%iVMR_3(i) = j
-              exists = .True.
-              exit
-            end if
-          end if
-        end do
-
-        if (exists .eqv. .False.) then
-          print*, 'ERROR - Specified CIA species component not found in prf VMR list - STOPPING'
-          if (ni == 2) then
-            print*, 'Species 2 part: ', CIA(s)%sp, CIA(s)%sp_con(i)
-          else if (ni == 3) then
-            print*, 'Species 3 part: ', CIA(s)%sp, CIA(s)%sp_con_3(i)
-          end if
-          stop
+        ! Check for 3 species special
+        if (CIA(s)%i3 .eqv. .True.) then
+          ni = 3
+        else
+          ni = 2
         end if
 
+        do i = 1, ni
+          exists = .False.
+          do j = 1, n_sp
+            if (ni == 2) then
+              if (CIA(s)%sp_con(i) == sp_list(j)) then
+                CIA(s)%iVMR(i) = j
+                exists = .True.
+                exit
+              end if
+            else if (ni == 3) then
+              if (CIA(s)%sp_con_3(i) == sp_list(j)) then
+                CIA(s)%iVMR_3(i) = j
+                exists = .True.
+                exit
+              end if
+            end if
+          end do
+
+          if (exists .eqv. .False.) then
+            print*, 'ERROR - Specified CIA species component not found in prf VMR list - STOPPING'
+            if (ni == 2) then
+              print*, 'Species 2 part: ', CIA(s)%sp, CIA(s)%sp_con(i)
+            else if (ni == 3) then
+              print*, 'Species 3 part: ', CIA(s)%sp, CIA(s)%sp_con_3(i)
+            end if
+            stop
+          end if
+
+        end do
       end do
-    end do
     end if
 
     ! Read in prepared CIA tables
     if (n_CIA > 0) then
+
       do s = 1, n_CIA
 
         print*, 'Reading CIA species: ', trim(CIA(s)%sp), ' @ ', trim(CIA(s)%path)
@@ -785,16 +878,16 @@ contains
           open(newunit=u,file=trim(CIA(s)%path),action='read',status='old')
 
           ! Allocate CIA table temperature arrays
-          allocate(CIA(s)%T(nset))
+          allocate(CIA(s)%T(CIA(s)%nT))
 
           ! Read and allocate data until error (end of file)
-          do n = 1, nset
+          do n = 1, CIA(s)%nT
             read(u,*,iostat=stat) name, wn_s, wn_e, nrec, temp_r, kmax, dum
             !print*, n, name, wn_s, wn_e, nrec, temp_r, kmax, dum
             if (n == 1) then
               ! Allocate CIA table wn and table value array
               allocate(CIA(s)%wn(nrec))
-              allocate(CIA(s)%kap(nrec,nset))
+              allocate(CIA(s)%kap(nrec,CIA(s)%nT))
               CIA(s)%nwl = nrec
             end if
             ! Check if end of file reached
@@ -848,15 +941,15 @@ contains
     end if
 
     if (n_Ray > 0) then
-    ! Read Rayleigh namelist
-    allocate(Ray(n_Ray))
-    allocate(Ray_form(n_Ray),Ray_sp(n_Ray),Ray_paths(n_Ray))
-    read(u_nml, nml=Ray_nml)
+      ! Read Rayleigh namelist
+      allocate(Ray(n_Ray))
+      allocate(Ray_form(n_Ray),Ray_sp(n_Ray),Ray_paths(n_Ray))
+      read(u_nml, nml=Ray_nml)
 
-    Ray(:)%sp = Ray_sp(:)
-    Ray(:)%path = Ray_paths(:)
+      Ray(:)%sp = Ray_sp(:)
+      Ray(:)%path = Ray_paths(:)
 
-    do s = 1, n_Ray
+      do s = 1, n_Ray
         exists = .False.
         do j = 1, n_sp
           if (Ray(s)%sp == sp_list(j)) then
@@ -871,24 +964,24 @@ contains
           print*, 'Species: ', s, Ray(s)%sp
           stop
         end if
-    end do
-
-    ! Read in Rayleigh scattering data
-    if (n_Ray > 0) then
-      do s = 1, n_Ray
-        allocate(Ray(s)%kap(n_b))
-        print*, 'Reading Rayleigh data @ ',trim(Ray(s)%path)
-        open(newunit=uR,file=trim(Ray(s)%path),action='read',status='old')
-        read(uR,*)
-        read(uR,*) Ray(s)%kap(:)
-        !print*, s, Ray(s)%kap(:)
-        close(uR)
       end do
+
+      ! Read in Rayleigh scattering data
+      if (n_Ray > 0) then
+        do s = 1, n_Ray
+          allocate(Ray(s)%kap(n_b))
+          print*, 'Reading Rayleigh data: ', trim(Ray(s)%sp), ' @ ',trim(Ray(s)%path)
+          open(newunit=uR,file=trim(Ray(s)%path),action='read',status='old')
+          read(uR,*)
+          read(uR,*) Ray(s)%kap(:)
+          !print*, s, Ray(s)%kap(:)
+          close(uR)
+        end do
+      end if
     end if
-  end if
 
 
-  print*, 'Finished reading'
+    print*, 'Finished reading'
 
   end subroutine read_gas_data
 
@@ -896,7 +989,7 @@ contains
   subroutine CIA_Hminus(n_sp, s, b, T, Nl, VMR, k_cia)
     implicit none
     ! John (1988) paramaters
-    real(kind=dp), dimension(6), parameter :: &
+    real(dp), dimension(6), parameter :: &
       & An_ff1 = (/518.1021_dp, 472.2636_dp, -482.2089_dp, 115.5291_dp, 0.0_dp, 0.0_dp/), &
       & Bn_ff1 = (/-734.8666_dp, 1443.4137_dp, -737.1616_dp, 169.6374_dp, 0.0_dp, 0.0_dp/), &
       & Cn_ff1 = (/1021.1775_dp, -1977.3395_dp, 1096.8827_dp, -245.6490_dp, 0.0_dp, 0.0_dp/), &
@@ -904,7 +997,7 @@ contains
       & En_ff1 = (/93.1373_dp, -178.9275_dp, 101.7963_dp, -21.9972_dp, 0.0_dp, 0.0_dp/), &
       & Fn_ff1 = (/-6.4285_dp, 12.3600_dp, -7.0571_dp, 1.5097_dp, 0.0_dp, 0.0_dp/)
 
-    real(kind=dp), dimension(6), parameter :: &
+    real(dp), dimension(6), parameter :: &
       & An_ff2 = (/0.0_dp, 2483.3460_dp, -3449.8890_dp, 2200.0400_dp, -696.2710_dp, 88.2830_dp/), &
       & Bn_ff2 = (/0.0_dp, 285.8270_dp, -1158.3820_dp, 2427.7190_dp, -1841.4000_dp, 444.5170_dp/), &
       & Cn_ff2 = (/0.0_dp, -2054.2910_dp, 8746.5230_dp, -13651.1050_dp, 8642.9700_dp, -1863.8640_dp/), &
@@ -912,19 +1005,19 @@ contains
       & En_ff2 = (/0.0_dp, -1341.5370_dp, 5303.6090_dp, -7510.4940_dp, 4400.0670_dp, -901.7880_dp/), &
       & Fn_ff2 = (/0.0_dp, 208.9520_dp, -812.9390_dp, 1132.7380_dp, -655.0200_dp, 132.9850_dp/)
 
-    real(kind=dp), dimension(6), parameter :: &
+    real(dp), dimension(6), parameter :: &
       & Cn_bf = (/152.519, 49.534, -118.858, 92.536, -34.194, 4.982 /)
 
-    real(kind=dp), parameter :: alf = 1.439e8_dp, lam_0 = 1.6419_dp
+    real(dp), parameter :: alf = 1.439e8_dp, lam_0 = 1.6419_dp
 
     integer, intent(in) :: s, b, n_sp
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), intent(in) :: T, Nl
-    real(kind=dp), intent(out) :: k_cia
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(in) :: T, Nl
+    real(dp), intent(out) :: k_cia
 
     integer :: n
-    real(kind=dp) :: kff, kbf, fbf, xbf, sff
-    real(kind=dp) :: T5040
+    real(dp) :: kff, kbf, fbf, xbf, sff
+    real(dp) :: T5040
 
     T5040 = 5040.0_dp / T
 
@@ -935,7 +1028,7 @@ contains
     else
       fbf = 0.0_dp
       do n = 1, 6
-        fbf = fbf + Cn_bf(n) * (1.0_dp/wl(b) - 1.0_dp/lam_0)**((real(n,kind=dp)-1.0_dp)/2.0_dp)
+        fbf = fbf + Cn_bf(n) * (1.0_dp/wl(b) - 1.0_dp/lam_0)**((real(n,dp)-1.0_dp)/2.0_dp)
       end do
       xbf = 1.0e-18_dp * wl(b)**3 * (1.0_dp/wl(b) - 1.0_dp/lam_0)**(3.0_dp/2.0_dp) * fbf
       !kbf = 0.750_dp * T**(-5.0_dp/2.0_dp) * exp(alf/(lam_0*T)) * (1.0_dp - exp(-alf/(wl(b)*T))) * xbf
@@ -945,14 +1038,14 @@ contains
     sff = 0.0_dp
     if (wl(b) >= 0.3645_dp) then
       do n = 1, 6
-        sff = sff + T5040**((real(n,kind=dp)+1.0_dp)/2.0_dp) &
+        sff = sff + T5040**((real(n,dp)+1.0_dp)/2.0_dp) &
                 & * (wl(b)**2*An_ff2(n) + Bn_ff2(n)  + Cn_ff2(n)/wl(b) + Dn_ff2(n)/wl(b)**2 + En_ff2(n)/wl(b)**3 &
                 & + Fn_ff2(n)/wl(b)**4)
       end do
       kff = 1.0e-29_dp * sff
     else if ((wl(b) < 0.3645_dp) .and. (wl(b) > 0.1823_dp)) then
       do n = 1, 6
-        sff = sff + T5040**((real(n,kind=dp)+1.0_dp)/2.0_dp) &
+        sff = sff + T5040**((real(n,dp)+1.0_dp)/2.0_dp) &
                 & * (wl(b)**2*An_ff1(n) + Bn_ff1(n)  + Cn_ff1(n)/wl(b) + Dn_ff1(n)/wl(b)**2 + En_ff1(n)/wl(b)**3 &
                 & + Fn_ff1(n)/wl(b)**4)
       end do
@@ -974,11 +1067,11 @@ contains
     implicit none
 
     integer, intent(in) :: s, b, n_sp
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), intent(in) :: T, Nl
-    real(kind=dp), intent(out) :: k_Hem
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(in) :: T, Nl
+    real(dp), intent(out) :: k_Hem
 
-    real(kind=dp) :: aa, bb, cc, kff
+    real(dp) :: aa, bb, cc, kff
 
     ! Polynomial coefficents, frequency f in [Hz]
     aa = 3.397e-46_dp + (-5.216e-31_dp + 7.039e-15_dp/freq(b))/freq(b)
@@ -998,14 +1091,14 @@ contains
     implicit none
 
     integer, intent(in) :: s, b, n_sp
-    real(kind=dp), dimension(n_sp), intent(in) :: VMR
-    real(kind=dp), intent(in) :: T, Nl
-    real(kind=dp), intent(out) :: kff
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(in) :: T, Nl
+    real(dp), intent(out) :: kff
 
     integer :: iwl, iwl1, iT, iT1
-    real(kind=dp) :: T5040, wlA
-    real(kind=dp) :: xval, x0, x1, yval, y0, y1
-    real(kind=dp) :: a00, a10, a01, a11, aval
+    real(dp) :: T5040, wlA
+    real(dp) :: xval, x0, x1, yval, y0, y1
+    real(dp) :: a00, a10, a01, a11, aval
 
     T5040 = 5040.0_dp / T
     wlA = wl(b) * 1.0e4_dp
@@ -1109,8 +1202,8 @@ contains
     implicit none
 
     integer, intent(out) :: idx
-    real(kind=dp), dimension(:), intent(in) :: arr
-    real(kind=dp),intent(in) ::  var
+    real(dp), dimension(:), intent(in) :: arr
+    real(dp),intent(in) ::  var
     integer :: jl, jm, ju
 
     ! Search an array using bi-section/binary search (numerical methods)
@@ -1135,10 +1228,10 @@ contains
   subroutine linear_interp(xval, x1, x2, y1, y2, yval)
     implicit none
 
-    real(kind=dp), intent(in) :: xval, y1, y2, x1, x2
-    real(kind=dp) :: lxval, ly1, ly2, lx1, lx2
-    real(kind=dp), intent(out) :: yval
-    real(kind=dp) :: norm
+    real(dp), intent(in) :: xval, y1, y2, x1, x2
+    real(dp) :: lxval, ly1, ly2, lx1, lx2
+    real(dp), intent(out) :: yval
+    real(dp) :: norm
 
     lxval = xval
     lx1 = x1; lx2 = x2
@@ -1153,10 +1246,10 @@ contains
   subroutine bilinear_interp(xval, yval, x1, x2, y1, y2, a11, a21, a12, a22, aval)
     implicit none
 
-    real(kind=dp), intent(in) :: xval, yval, x1, x2, y1, y2, a11, a21, a12, a22
-    real(kind=dp) :: lxval, lyval, lx1, lx2, ly1, ly2, la11, la21, la12, la22
-    real(kind=dp), intent(out) :: aval
-    real(kind=dp) :: norm
+    real(dp), intent(in) :: xval, yval, x1, x2, y1, y2, a11, a21, a12, a22
+    real(dp) :: lxval, lyval, lx1, lx2, ly1, ly2, la11, la21, la12, la22
+    real(dp), intent(out) :: aval
+    real(dp) :: norm
 
     lxval = xval ; lyval = yval
     lx1 = x1 ; lx2 = x2 ; ly1 = y1 ; ly2 = y2
@@ -1177,10 +1270,10 @@ contains
   subroutine linear_log_interp(xval, x1, x2, y1, y2, yval)
     implicit none
 
-    real(kind=dp), intent(in) :: xval, y1, y2, x1, x2
-    real(kind=dp) :: lxval, ly1, ly2, lx1, lx2
-    real(kind=dp), intent(out) :: yval
-    real(kind=dp) :: norm
+    real(dp), intent(in) :: xval, y1, y2, x1, x2
+    real(dp) :: lxval, ly1, ly2, lx1, lx2
+    real(dp), intent(out) :: yval
+    real(dp) :: norm
 
     lxval = log10(xval)
     lx1 = log10(x1); lx2 = log10(x2)
@@ -1195,10 +1288,10 @@ contains
   subroutine bilinear_log_interp(xval, yval, x1, x2, y1, y2, a11, a21, a12, a22, aval)
     implicit none
 
-    real(kind=dp), intent(in) :: xval, yval, x1, x2, y1, y2, a11, a21, a12, a22
-    real(kind=dp) :: lxval, lyval, lx1, lx2, ly1, ly2, la11, la21, la12, la22
-    real(kind=dp), intent(out) :: aval
-    real(kind=dp) :: norm
+    real(dp), intent(in) :: xval, yval, x1, x2, y1, y2, a11, a21, a12, a22
+    real(dp) :: lxval, lyval, lx1, lx2, ly1, ly2, la11, la21, la12, la22
+    real(dp), intent(out) :: aval
+    real(dp) :: norm
 
     lxval = log10(xval) ; lyval = log10(yval)
     lx1 = log10(x1) ; lx2 = log10(x2) ; ly1 = log10(y1) ; ly2 = log10(y2)
@@ -1218,8 +1311,8 @@ contains
   subroutine sort2(N,RA,RB)
     integer, intent(in) :: N
     integer :: L, IR, I, J
-    real(kind=dp), dimension(N), intent(inout) :: RA, RB
-    real(kind=dp) :: RRA, RRB
+    real(dp), dimension(N), intent(inout) :: RA, RB
+    real(dp) :: RRA, RRB
     L=N/2+1
     IR=N
 10  CONTINUE
@@ -1261,5 +1354,22 @@ contains
     RB(I)=RRB
     GO TO 10
   end subroutine sort2
+
+  real(dp) function BB(wl_in, T_in)
+    implicit none
+
+    ! Planck function in wavelength units
+
+    real(dp), intent(in) :: wl_in, T_in
+    real(dp) :: left, right
+    real(dp) :: wl_cm
+
+    wl_cm = wl_in * 1.0e-4_dp
+
+    left = (2.0_dp * hp * c_s**2)/(wl_cm)**5
+    right = 1.0_dp / (exp((hp * c_s) / (wl_cm * kb * T_in)) - 1.0_dp)
+    BB = left * right
+
+  end function BB
 
 end module ck_opacity_mod

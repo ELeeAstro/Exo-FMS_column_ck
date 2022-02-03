@@ -3,9 +3,9 @@
 ts_scheme = 'Shortchar'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
-CE_scheme = 'Interp'
+CE_scheme = 'Burrows'
 
-data_dir = 'data/'
+data_dir = 'data'
 nb = 11
 wl_sh = 'wavelengths_GCM_11.txt'
 stellarf_sh = 'sw_band_flux_HD209_11.txt'
@@ -13,11 +13,11 @@ stellarf_sh = 'sw_band_flux_HD209_11.txt'
 Rs = 1.203
 sm_ax = 0.04747
 
-n_ck = 1
+n_ck = 4
 ng = 8
-nsp = 5
-n_cia = 7
-n_ray = 4
+nsp = 7
+n_cia = 2
+n_ray = 2
 
 nlay = 54
 a_sh = 'Hybrid_sigma_grid_a_54.txt'
@@ -41,14 +41,14 @@ met = 0.0
 
 iIC = 4
 corr = .True.
-table_num = 1
+table_num = 2
 
 /
 
 &sp_nml
 
-sp_list = 'H2', 'He', 'H ', 'H-', 'el'
-VMR_tab_sh = 'data/interp_table_UHJ.txt'
+!Burrows species list
+sp_list = 'H2', 'He', 'H2O', 'CH4','CO', 'N2', 'NH3'
 
 /
 
@@ -61,27 +61,30 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 
 &ck_nml
 
-premix = .True.
-ck_form = 2
-ck_sp = 'PM'
-ck_paths = 'data/ck/PM_ck_HELIOSK_cond_11.txt'
+PM = .False.
+RORR = .False.
+AEE = .True.
+ck_form = 2, 2, 2, 2
+ck_sp = 'H2O','CH4', 'CO', 'NH3'
+ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
+'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt',
+
 
 /
 
 &cia_nml
 
-cia_form = 1, 1, 1, 1, 0, 2, 2
-cia_sp = 'H2-H2', 'H2-He', 'H2-H', 'He-H', 'H-', 'He-', 'H2-'
-cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H_2011.cia',
-'data/cia/He-H_2011.cia', '', 'data/cia/He-_ff.txt', 'data/cia/H2-_ff.txt'
+cia_form = 1, 1
+cia_sp = 'H2-H2', 'H2-He'
+cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia'
 
 
 /
 
 &ray_nml
 
-ray_form = 1, 1, 1, 1
-ray_sp = 'H2', 'He', 'H', 'el'
-ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt', 'data/ray/Ray_H_11.txt', 'data/ray/Ray_e-_11.txt'
+ray_form = 1, 1
+ray_sp = 'H2', 'He'
+ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt'
 
 /
