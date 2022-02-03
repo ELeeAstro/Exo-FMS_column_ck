@@ -2,14 +2,14 @@
 
 ## WORK IN PROGRESS TO GET ALL METHODS WORKING, but Shortchar, Disort & Toon scattering TS modules work.
 
-Elspeth KH Lee - Dec 2021
+Elspeth KH Lee - Feb 2022
 
 This is the third part of a series of codes that builds upon different two-stream approaches and schemes, primarily useful for the GCM modeling community.
 This is the correlated-k (corr-k) version, currently set up for 11, 30 or 32 bands as discussed in Kataria et al. (2013), Showman et al. (2009) and Amundsen et al. (2014) respectivly for modelling hot Jupiter atmospheres.
 
 Some useful references useful for corr-k modelling are: \
-Goody et al. 1989 \
-Lacis & Oinas 1991 \
+Goody et al. (1989) \
+Lacis & Oinas (1991) \
 Showman et al. (2009) \
 Kataria et al. (2013) \
 Grimm & Heng (2015) \
@@ -17,10 +17,7 @@ Amundsen et al. (2014, 2017) \
 Lee et al. (2021) \
 and plenty of others...
 
-This allows the atmosphere to cool from two photospheric regions, rather than one in the semi-grey scheme, leading to more realistic cooling in the upper atmosphere.
-However, at very low pressures, isothermal T-p profiles are still produced.
-
-Unfortunately the numerical results in 1D can in certain circumstances produce small spiky profiles, primarily due to issues either relating to the opacity table fidelity, important optical absorbitng species condensing (at low pressure) leading to large opacity gradients, or interpolation error or vertical grid resolution.
+Unfortunately the numerical results in 1D can in certain circumstances produce small spiky profiles, primarily due to issues either relating to the opacity table fidelity, important optical absorbitng species condensing (at low pressure e.g. TiO) leading to large opacity gradients, or interpolation error or vertical grid resolution.
 However, inside a GCM these spikes are typically smoothed out by the dynamical processes.
 
 To compile enter 'make' in the main directory. To remove compiled code enter 'make clean'.
@@ -58,11 +55,12 @@ Importantly we include the important species responsible for the upper atmospher
 Alternative pre-mixed tables without UV-OPT absorbers labeled 'nOPT' in the ck data directory.
 The pre-mixed tables were calculated assuming local rainout (i.e. species that have condensed are at their saturation point)
 
-More individual k-tables can be produced upon request and will be made availible publically at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap method.
+More individual k-tables can be produced upon request and will be made availible publically at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equilvalent extinction (AEE) methods.
 
 # Namelist options
 
-### See FMS_RC.nml_RO for a random overlap example using Burrows analytic CE abundances. 
+### See FMS_RC.nml_RORR for a random overlap resort rebin example using Burrows analytic CE abundances. 
+### See FMS_RC.nml_AEE for a adaptive equilvalent extinction example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_PM for a pre-mixed example using interpolation from the CE grid.
 
 In the file 'FMS_RC.nml' you can select different options that control the simulation, a default set-up for HD 209458b is provided.
@@ -138,7 +136,9 @@ gw - the Gaussian weights for the k-tables
 
 ### &ck_nml
 
-premix - .True. (for pre-mixed tables), .False. (for Random overlap) \
+PM - .True. (for pre-mixed tables), .False. \
+RORR - .True. (for random overlap resort rebin), .False. \
+AEE - .True. (for adaptive equivalent extinction), .False. \
 ck_form  - format of k-tables (2 = Helios-k format used here) \
 ck_sp - names of species for corr-k routines ('PM' for pre-mixed) \
 ck_paths - path to the corr-k tables in order of species in ck_sp
@@ -173,6 +173,5 @@ For scattering problems we recommend the two stream DISORT version, it is very r
 
 We will include versions that include multiple-scattering in the longwave in the future. \
 Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions. \
-Add switch for Bezier interpolation (make this .False.) in the modules if you wany linear interpolation. \
-Include the equivalent extinction method.
+Add switch for Bezier interpolation (make this .False. in the modules if you want linear interpolation). 
 
