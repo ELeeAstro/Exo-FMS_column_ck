@@ -55,12 +55,12 @@ Importantly we include the important species responsible for the upper atmospher
 Alternative pre-mixed tables without UV-OPT absorbers labeled 'nOPT' in the ck data directory.
 The pre-mixed tables were calculated assuming local rainout (i.e. species that have condensed are at their saturation point)
 
-More individual k-tables can be produced upon request and will be made availible publically at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equilvalent extinction (AEE) methods.
+More individual k-tables can be produced upon request and will be made availible publically at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equivalent extinction (AEE) methods.
 
 # Namelist options
 
 ### See FMS_RC.nml_RORR for a random overlap resort rebin example using Burrows analytic CE abundances. 
-### See FMS_RC.nml_AEE for a adaptive equilvalent extinction example using Burrows analytic CE abundances.
+### See FMS_RC.nml_AEE for a adaptive equivalent extinction example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_PM for a pre-mixed example using interpolation from the CE grid.
 
 In the file 'FMS_RC.nml' you can select different options that control the simulation, a default set-up for HD 209458b is provided.
