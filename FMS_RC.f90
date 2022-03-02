@@ -236,16 +236,17 @@ program Exo_FMS_RC
     select case(opac_scheme)
     case('ck')
 
-       !do k = 1, nlay
-        call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), nsp, sp_list(:), VMR(:,:), &
-        & k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
-      !end do
+       ! Calculate the opacity structure of the column
+       call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), nsp, sp_list(:), VMR(:,:), &
+       & k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
 
-      tau_e(:,:,1) = 0.0_dp
+      ! Include optical depth component from 0 pressure, assuming constant T and p at boundary
+      tau_e(:,:,1) = (k_l(:,:,1) * pe(1)) / grav
       do k = 1, nlay
         tau_e(:,:,k+1) = tau_e(:,:,k) + (k_l(:,:,k) * dpe(k)) / grav
         !print*, k, k_l(1,1,k), tau_e(1,1,k+1), k_l(8,1,k), tau_e(8,1,k+1)
       end do
+
     case default
       print*, 'Invalid opac_scheme: ', trim(opac_scheme)
       stop
