@@ -64,9 +64,13 @@ program Exo_FMS_RC
   real(dp), allocatable, dimension(:) :: mu
   character(len=10), allocatable, dimension(:) :: sp_list
 
-
   real(dp) :: cp_air, grav, k_IR, k_V, kappa_air, Rd_air
   real(dp) :: Rs, sm_ax
+
+  logical :: zcorr
+  integer :: zcorr_meth
+  real(dp) :: radius
+  real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp  
 
   integer :: iIC
   logical :: corr
@@ -85,7 +89,7 @@ program Exo_FMS_RC
   namelist /FMS_RC_nml/ ts_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
           & t_step, nstep, Rd_air, cp_air, grav, mu_z, Tirr, Tint, k_V, k_IR, fl, met, &
           & iIC, corr, table_num, nb, ng, nsp, wl_sh, data_dir, stellarf_sh, n_ck, &
-          & n_cia, n_ray, Rs, sm_ax
+          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius
 
   namelist /sp_nml/ sp_list, VMR_tab_sh
 
@@ -161,6 +165,7 @@ program Exo_FMS_RC
   allocate(tau_e(ng,nb,nlev), k_l(ng,nb,nlay))
   allocate(ssa(ng,nb,nlay), gg(ng,nb,nlay))
   allocate(VMR(nsp,nlay), mu(nlay))
+  allocate(alt(nlev), mu_z_eff(nlev), alp(nlev))
 
 
   !! Calculate the adiabatic coefficent
@@ -252,6 +257,37 @@ program Exo_FMS_RC
       stop
     end select
 
+    !! Zenith angle geometric correction
+    if (zcorr .eqv. .True. .and. mu_z > 0.0_dp) then
+      ! First calculate the altitude at each level from the hypsometric equation
+      ! Assume constant gravity for simplicity
+      alt(nlev) = 0.0_dp
+      do k = nlay, 1, -1
+        alt(k) = alt(k+1) + (Rd_air*Tl(k))/grav * log(pe(k+1)/pe(k))
+      end do
+
+      select case(zcorr_meth)
+      case(1)
+        ! Basic geometric correction following Li & Shibata (2006) Eq. (2)
+        mu_z_eff(:) = sqrt(1.0 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2))
+      case(2)
+        ! Spherical layer correction following Li & Shibata (2006) Eq.(10)
+        alp(nlev) = (alt(nlay) -  alt(nlev))/radius
+        do k = nlay,1,-1
+           alp(k) = (alt(k) -  alt(k+1))/(radius + alt(k))
+        end do
+        mu_z_eff(:) = (sqrt(1.0 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2)) + &
+        & sqrt((1.0 + alp(:))**2 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2))) / &
+        & (2.0 + alp(:))
+      case default
+        print*, 'Invalid zcorr_meth ', zcorr_meth
+        stop
+      end select
+    else
+      ! No correction, use single zenith angle
+      mu_z_eff(:) = mu_z
+    end if
+
     !! Two stream radiative transfer step
     select case(ts_scheme)
     case('Isothermal')
@@ -268,7 +304,7 @@ program Exo_FMS_RC
       call ts_Toon_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
     case('Shortchar')
       ! Short characteristics method without scattering
-      call ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
+      call ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z_eff, Finc, Tint, net_F, olr, asr)
     case('Heng')
       ! Heng flux method without scattering
       !do b = 1, 2
