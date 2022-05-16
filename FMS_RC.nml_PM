@@ -6,9 +6,9 @@ adj_scheme = 'Ray_dry'
 CE_scheme = 'Interp'
 
 data_dir = 'data/'
-nb = 11
-wl_sh = 'wavelengths_GCM_11.txt'
-stellarf_sh = 'sw_band_flux_HD209_11.txt'
+nb = 32
+wl_sh = 'wavelengths_GCM_32.txt'
+stellarf_sh = 'sw_band_flux_HD209_32.txt'
 
 Rs = 1.203
 sm_ax = 0.04747
@@ -66,7 +66,7 @@ RORR = .False.
 AEE = .False.
 ck_form = 2
 ck_sp = 'PM'
-ck_paths = 'data/ck/PM_ck_HELIOSK_cond_11.txt'
+ck_paths = 'data/ck/PM_ck_HELIOSK_cond_32.txt'
 
 /
 
@@ -84,6 +84,6 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H
 
 ray_form = 1, 1, 1, 1
 ray_sp = 'H2', 'He', 'H', 'el'
-ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt', 'data/ray/Ray_H_11.txt', 'data/ray/Ray_e-_11.txt'
+ray_paths = 'data/ray/Ray_H2_32.txt', 'data/ray/Ray_He_32.txt', 'data/ray/Ray_H_32.txt', 'data/ray/Ray_e-_32.txt'
 
 /

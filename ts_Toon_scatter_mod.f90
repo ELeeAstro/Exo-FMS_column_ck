@@ -28,6 +28,7 @@ module ts_Toon_scatter_mod
   real(dp), parameter :: n2 = 2.0_dp * hp * c2
 
   real(dp), parameter :: ubari = 0.5_dp
+  real(dp), parameter :: sqrt3 = sqrt(3.0_dp)
 
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
@@ -219,10 +220,10 @@ contains
 
     l = nlay + nlay
     lm2 = l - 2
-    lm1 = l -1
+    lm1 = l - 1
 
     do k = 1, nlay
-      dtau1(k) = max(tau_IR1(k+1) - tau_IR1(k),1e-5_dp)
+      dtau1(k) = max(tau_IR1(k+1) - tau_IR1(k),1e-6_dp)
     end do
 
     ! Delta eddington scaling
@@ -241,7 +242,7 @@ contains
     term(:) = ubari/(1.0_dp-w0(:)*hg(:))
 
     do k = 1, nlay
-      if (dtau(k) < 3e-6_dp) then
+      if (dtau(k) < 1e-6_dp) then
         ! For low optical depths use the isothermal approimation
         B1(k) = 0.0_dp
         B0(k) = 0.5_dp*(be(k+1) + be(k))
@@ -439,10 +440,10 @@ contains
 
     l = nlay + nlay
     lm2 = l - 2
-    lm1 = l -1
+    lm1 = l - 1
 
     do k = 1, nlay
-      dtau1(k) = max(tau_V1(k+1) - tau_V1(k),1e-5_dp)
+      dtau1(k) = max(tau_V1(k+1) - tau_V1(k),1e-6_dp)
     end do
 
     ! Delta eddington scaling
@@ -457,12 +458,12 @@ contains
 
     direct(:) = Finc * mu_z * exp(-tau_V(:)/mu_z)
 
-    g1(:) = 0.86602540378_dp * (2.0_dp-w0(:)*(1.0_dp+hg(:)))
-    g2(:) = (1.7320508075688772_dp*w0(:)/2.0_dp) * (1.0_dp-hg(:))
+    g1(:) = (sqrt3/2.0_dp) * (2.0_dp-w0(:)*(1.0_dp+hg(:)))
+    g2(:) = (sqrt3*w0(:)/2.0_dp) * (1.0_dp-hg(:))
     where (g2(:) == 0.0_dp)
       g2(:) = 1.0e-10_dp
     end where
-    g3(:) = (1.0_dp - 1.7320508075688772_dp*hg(:)*mu_z)/2.0_dp
+    g3(:) = (1.0_dp - sqrt3*hg(:)*mu_z)/2.0_dp
     g4(:) = 1.0_dp - g3(:)
 
     lam(:) = sqrt(g1(:)**2 - g2(:)**2)

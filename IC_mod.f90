@@ -49,6 +49,8 @@ contains
       ! Mayne et al. (2014) IC - check the iprof parameter in the subroutine
       ! for then dayside/nightside switch
       call Mayne_2014_IC(nlay,pl,Tl)
+    case(6)
+      call CAMEMBERT_IC(nlay,pl,Tl)
     case default
       print*, 'Invalid IC integer in IC_mod, stopping'
       stop
@@ -63,6 +65,96 @@ contains
     end if
 
   end subroutine IC_profile
+
+  subroutine CAMEMBERT_IC(nlay,pl,Tl)
+    implicit none
+
+    integer, intent(in) :: nlay
+    real(dp), dimension(nlay), intent(in) :: pl
+
+    real(dp), dimension(nlay), intent(out) :: Tl
+
+    real(dp), dimension(:), allocatable :: p_C, T_C
+
+    integer :: i, nTP, u
+
+    integer :: iT, iT1, ip, ip1
+
+    open(newunit=u,file='CAMEMBERT_GJ1214b_IC_H2He.dat',action='read')
+
+    do i = 1, 6
+      read(u,*)
+    end do
+
+    nTP = 87
+
+    allocate(p_C(nTP), T_C(nTP))
+
+    do i = 1, nTP
+      read(u,*) p_C(i), T_C(i)
+    end do
+
+    do i = 1, nlay
+
+      call locate(p_C,pl(i),ip)
+      ip1 = ip + 1
+
+      if (ip == 0) then
+        Tl(i) = T_C(1)
+      else if (ip == nTP) then
+        Tl(i) = T_C(nTP)
+      else
+        call linear_log_interp(pl(i), p_C(ip), p_C(ip1), T_C(ip), T_C(ip1), Tl(i))
+      end if
+
+    end do
+
+  end subroutine CAMEMBERT_IC
+
+    subroutine locate(arr, var, idx)
+    implicit none
+
+    integer, intent(out) :: idx
+    real(kind=dp), dimension(:), intent(in) :: arr
+    real(kind=dp),intent(in) ::  var
+    integer :: jl, jm, ju
+
+    ! Search an array using bi-section/binary search (numerical methods)
+    ! Then return array index that is lower than var in arr
+
+    jl = 0
+    ju = size(arr)+1
+    do while (ju-jl > 1)
+      jm = (ju+jl)/2
+      if (var > arr(jm)) then
+        jl=jm
+      else
+        ju=jm
+      end if
+    end do
+
+    idx = jl
+
+  end subroutine locate
+
+  ! Perform linear interpolation in log10 space
+  subroutine linear_log_interp(xval, x1, x2, y1, y2, yval)
+    implicit none
+
+    real(kind=dp), intent(in) :: xval, y1, y2, x1, x2
+    real(kind=dp) :: lxval, ly1, ly2, lx1, lx2
+    real(kind=dp), intent(out) :: yval
+    real(kind=dp) :: norm
+
+    lxval = log10(xval)
+    lx1 = log10(x1); lx2 = log10(x2)
+    ly1 = log10(y1); ly2 = log10(y2)
+
+    norm = 1.0_dp / (lx2 - lx1)
+
+    yval = 10.0_dp**((ly1 * (lx2 - lxval) + ly2 * (lxval - lx1)) * norm)
+
+  end subroutine linear_log_interp
 
   subroutine Iso_IC(nlay,Tint,Tl)
     implicit none
