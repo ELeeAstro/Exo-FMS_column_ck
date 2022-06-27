@@ -1,7 +1,7 @@
 !!!
 ! Elspeth KH Lee - May 2021 : Initial version
 !                - Jan 2022 : Working version
-!                
+!
 ! sw: Toon et al. 1989 method following the CHIMERA implimentation
 ! lw: Two-stream method following the "Toon" method (Toon et al. 1989)
 !     Based on the CHIMERA code by Mike Line, but cleaned up slightly
@@ -68,12 +68,12 @@ module ts_Toon_scatter_mod
   !   & (/0.0157479145_dp, 0.0739088701_dp, 0.1463869871_dp, 0.1671746381_dp, 0.0967815902_dp/)
 
   public :: ts_Toon_scatter
-  private :: lw_grey_updown_Toon, sw_grey_updown_Toon, linear_log_interp, bezier_interp, BB_integrate
+  private :: lw_grey_updown_Toon, sw_grey_updown_Toon, linear_interp, bezier_interp, BB_integrate
 
 contains
 
-  subroutine ts_Toon_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, &
-    & net_F, olr, asr)
+  subroutine ts_Toon_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
+    &  mu_z, Finc, Tint, net_F, olr, asr)
     implicit none
 
     !! Input variables
@@ -86,6 +86,7 @@ contains
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
     real(dp), dimension(nb), intent(in) :: Finc
     real(dp), intent(in) :: mu_z, Tint
+    logical, intent(in) :: Bezier
 
     !! Output variables
     real(dp),  intent(out) :: olr, asr
@@ -93,7 +94,8 @@ contains
 
     !! Work variables
     integer :: i, b, g, k
-    real(dp), dimension(nlev) :: Te
+    real(dp), dimension(nlev) :: Te, lpe
+    real(dp), dimension(nlay) :: lTl, lpl
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: sw_down, sw_up, lw_down, lw_up
@@ -105,20 +107,27 @@ contains
 
     real(dp) :: a_surf = 0.0_dp
 
-    logical :: Bezier = .True.
+    ! Log the layer values and pressure edges for more accurate interpolation
+    lTl(:) = log10(Tl(:))
+    lpl(:) = log10(pl(:))
+    lpe(:) = log10(pe(:))
 
     !! Find temperature at layer edges through interpolation and extrapolation
     if (Bezier .eqv. .True.) then
+
       ! Perform interpolation using Bezier peicewise polynomial interpolation
       do i = 2, nlay-1
-        call bezier_interp(pl(i-1:i+1), Tl(i-1:i+1), 3, pe(i), Te(i))
+        call Bezier_interp(lpl(i-1:i+1), lTl(i-1:i+1), 3, lpe(i), Te(i))
+        Te(i) = 10.0_dp**(Te(i))
         !print*, i, pl(i), pl(i-1), pe(i), Tl(i-1), Tl(i), Te(i)
       end do
-      call bezier_interp(pl(nlay-2:nlay), Tl(nlay-2:nlay), 3, pe(nlay), Te(nlay))
+      call Bezier_interp(lpl(nlay-2:nlay), lTl(nlay-2:nlay), 3, lpe(nlay), Te(nlay))
+      Te(nlay) = 10.0_dp**(Te(nlay))
     else
       ! Perform interpolation using linear interpolation
       do i = 2, nlay
-        call linear_log_interp(pe(i), pl(i-1), pl(i), Tl(i-1), Tl(i), Te(i))
+        call linear_interp(lpe(i), lpl(i-1), lpl(i), lTl(i-1), lTl(i), Te(i))
+        Te(i) = 10.0_dp**(Te(i))
         !print*, i, pl(i), pl(i-1), pe(i), Tl(i-1), Tl(i), Te(i)
       end do
     end if
@@ -578,24 +587,22 @@ contains
 
   end subroutine dtridgl
 
-  ! Perform linear interpolation in log10 space
-  subroutine linear_log_interp(xval, x1, x2, y1, y2, yval)
+  ! Perform linear interpolation
+  subroutine linear_interp(xval, x1, x2, y1, y2, yval)
     implicit none
 
     real(dp), intent(in) :: xval, y1, y2, x1, x2
-    real(dp) :: lxval, ly1, ly2, lx1, lx2
     real(dp), intent(out) :: yval
     real(dp) :: norm
 
-    ly1 = log10(y1); ly2 = log10(y2)
+    norm = 1.0_dp / (x2 - x1)
 
-    norm = 1.0_dp / log10(x2/x1)
+    yval = (y1 * (x2 - xval) + y2 * (xval - x1)) * norm
 
-    yval = 10.0_dp**((ly1 * log10(x2/xval) + ly2 * log10(xval/x1)) * norm)
+  end subroutine linear_interp
 
-  end subroutine linear_log_interp
-
-  subroutine bezier_interp(xi, yi, ni, x, y)
+  ! Perform Bezier interpolation
+  subroutine Bezier_interp(xi, yi, ni, x, y)
     implicit none
 
     integer, intent(in) :: ni
@@ -615,11 +622,11 @@ contains
       ! left hand side interpolation
       !print*,'left'
       w = dx1/(dx + dx1)
-      !wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      !wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      !if (w < wlim .or. w > wlim1) then
-      !  w = 1.0_dp
-      !end if
+      wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w < min(wlim,wlim1) .or. w > max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
       yc = yi(2) - dx/2.0_dp * (w*dy/dx + (1.0_dp - w)*dy1/dx1)
       t = (x - xi(1))/dx
       y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
@@ -627,17 +634,17 @@ contains
       ! right hand side interpolation
       !print*,'right'
       w = dx/(dx + dx1)
-      !wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      !wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      !if (w < wlim .or. w > wlim1) then
-      !  w = 1.0_dp
-      !end if
+      wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w < min(wlim,wlim1) .or. w > max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
       yc = yi(2) + dx1/2.0_dp * (w*dy1/dx1 + (1.0_dp - w)*dy/dx)
       t = (x - xi(2))/(dx1)
       y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
     end if
 
-  end subroutine bezier_interp
+  end subroutine Bezier_interp
 
   subroutine BB_integrate(n_b, Te, wn_e, be)
     implicit none

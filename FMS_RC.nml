@@ -1,23 +1,23 @@
 &FMS_RC_nml
 
-ts_scheme = 'Shortchar'
+ts_scheme = 'Shortchar_Bezier'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
-CE_scheme = 'Burrows'
+CE_scheme = 'Interp'
 
-data_dir = 'data'
-nb = 11
-wl_sh = 'wavelengths_GCM_11.txt'
-stellarf_sh = 'sw_band_flux_HD209_11.txt'
+data_dir = 'data/'
+nb = 32
+wl_sh = 'wavelengths_GCM_32.txt'
+stellarf_sh = 'sw_band_flux_HD209_32.txt'
 
 Rs = 1.203
 sm_ax = 0.04747
 
-n_ck = 4
+n_ck = 1
 ng = 8
-nsp = 7
-n_cia = 2
-n_ray = 2
+nsp = 5
+n_cia = 7
+n_ray = 4
 
 nlay = 54
 a_sh = 'Hybrid_sigma_grid_a_54.txt'
@@ -30,7 +30,7 @@ nstep = 100000
 Rd_air = 3556.8
 cp_air = 1.3e4
 grav = 8.98
-mu_z = 0.1
+mu_z = 0.5
 Tirr = 2091.0
 Tint = 571.0
 
@@ -39,20 +39,22 @@ k_IR = 1e-3
 fl = 1.0
 met = 0.0
 
-zcorr = .True.
+Bezier = .True.
+
+zcorr = .False.
 zcorr_meth = 1
 radius = 7.1492e7
 
 iIC = 4
 corr = .True.
-table_num = 2
+table_num = 1
 
 /
 
 &sp_nml
 
-!Burrows species list
-sp_list = 'H2', 'He', 'H2O', 'CH4','CO', 'N2', 'NH3'
+sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
+VMR_tab_sh = 'data/UHJ_interp_co_1x_GCM.txt'
 
 /
 
@@ -65,30 +67,29 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 
 &ck_nml
 
-PM = .False.
+PM = .True.
 RORR = .False.
-AEE = .True.
-ck_form = 2, 2, 2, 2
-ck_sp = 'H2O','CH4', 'CO', 'NH3'
-ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
-'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt',
-
+AEE = .False.
+ck_form = 2
+ck_sp = 'PM'
+ck_paths = 'data/ck/PM_ck_HELIOSK_cond_32.txt'
 
 /
 
 &cia_nml
 
-cia_form = 1, 1
-cia_sp = 'H2-H2', 'H2-He'
-cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia'
+cia_form = 1, 1, 1, 1, 0, 2, 2
+cia_sp = 'H2-H2', 'H2-He', 'H2-H', 'He-H', 'H-', 'He-', 'H2-'
+cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H_2011.cia',
+'data/cia/He-H_2011.cia', '', 'data/cia/He-_ff.txt', 'data/cia/H2-_ff.txt'
 
 
 /
 
 &ray_nml
 
-ray_form = 1, 1
-ray_sp = 'H2', 'He'
-ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt'
+ray_form = 1, 1, 1, 1
+ray_sp = 'H2', 'He', 'H', 'e-'
+ray_paths = 'data/ray/Ray_H2_32.txt', 'data/ray/Ray_He_32.txt', 'data/ray/Ray_H_32.txt', 'data/ray/Ray_e-_32.txt'
 
 /

@@ -1,6 +1,6 @@
 &FMS_RC_nml
 
-ts_scheme = 'Shortchar'
+ts_scheme = 'Shortchar_Bezier'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
 CE_scheme = 'Interp'
@@ -39,6 +39,12 @@ k_IR = 1e-3
 fl = 1.0
 met = 0.0
 
+Bezier = .True.
+
+zcorr = .False.
+zcorr_meth = 1
+radius = 7.1492e7
+
 iIC = 4
 corr = .True.
 table_num = 1
@@ -47,8 +53,8 @@ table_num = 1
 
 &sp_nml
 
-sp_list = 'H2', 'He', 'H ', 'H-', 'el'
-VMR_tab_sh = 'data/interp_table_UHJ.txt'
+sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
+VMR_tab_sh = 'data/UHJ_interp_co_1x_GCM.txt'
 
 /
 
@@ -83,7 +89,7 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H
 &ray_nml
 
 ray_form = 1, 1, 1, 1
-ray_sp = 'H2', 'He', 'H', 'el'
+ray_sp = 'H2', 'He', 'H', 'e-'
 ray_paths = 'data/ray/Ray_H2_32.txt', 'data/ray/Ray_He_32.txt', 'data/ray/Ray_H_32.txt', 'data/ray/Ray_e-_32.txt'
 
 /

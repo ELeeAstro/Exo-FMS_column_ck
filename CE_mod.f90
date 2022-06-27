@@ -211,7 +211,6 @@ contains
 
   end subroutine CE_interpolate
 
-
   subroutine CE_interpolate_init(VMR_table)
     implicit none
 
@@ -249,7 +248,6 @@ contains
     lP_t = log10(P_t)
 
   end subroutine CE_interpolate_init
-
 
   subroutine locate(arr, n, var, idx)
     implicit none
@@ -291,7 +289,6 @@ contains
 
   end subroutine linear_interp
 
-
   pure subroutine bilinear_interp(xval, yval, x1, x2, y1, y2, a11, a21, a12, a22, aval)
     implicit none
 
@@ -308,6 +305,4 @@ contains
 
   end subroutine bilinear_interp
 
-
 end module CE_mod
-

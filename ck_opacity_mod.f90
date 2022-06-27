@@ -258,7 +258,7 @@ contains
     logical, dimension(n_ck) :: major
 
     !! Calculate average kappa in for each species in each layer for thermal component
-    !! First just try a general non-weighted average 
+    !! First just try a general non-weighted average
     !! - seems a good compromise for both stellar and thermal components
     do s = 1, n_ck
       do k = 1, nlay
@@ -1176,17 +1176,17 @@ contains
       case('H-')
         CIA(s)%sp_con_3(1) = 'H-'
         CIA(s)%sp_con_3(2) = 'H'
-        CIA(s)%sp_con_3(3) = 'el'
+        CIA(s)%sp_con_3(3) = 'e-'
 
         CIA(s)%i3 = .True.
 
       case('He-')
         CIA(s)%sp_con(1) = 'He'
-        CIA(s)%sp_con(2) = 'el'
+        CIA(s)%sp_con(2) = 'e-'
 
       case('H2-')
         CIA(s)%sp_con(1) = 'H2'
-        CIA(s)%sp_con(2) = 'el'
+        CIA(s)%sp_con(2) = 'e-'
 
       case default
         print*, 'ERROR - CIA species constituents could not be found - STOPPING'

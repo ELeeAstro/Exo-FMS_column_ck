@@ -13,16 +13,10 @@
 program Exo_FMS_RC
   use, intrinsic :: iso_fortran_env
 
-  use ts_isothermal_mod, only : ts_isothermal
-  ! use ts_isothermal_2_mod, only : ts_isothermal_2
-  ! use ts_Toon_mod, only : ts_Toon
   use ts_Toon_scatter_mod, only : ts_Toon_scatter
-  ! use ts_Heng_mod, only : ts_Heng
-  use ts_short_char_mod, only : ts_short_char
-  ! use ts_Lewis_scatter_mod, only : ts_Lewis_scatter
+  use ts_short_char_mod_linear, only : ts_short_char_linear
+  use ts_short_char_mod_Bezier, only : ts_short_char_Bezier
   use ts_disort_scatter_mod, only : ts_disort_scatter
-  ! use ts_Mendonca_mod, only : ts_Mendonca
-
   use CE_mod, only : CE_interpolate, CE_Burrows
   use ck_opacity_mod, only : ck_opacity
   use IC_mod, only : IC_profile
@@ -70,7 +64,7 @@ program Exo_FMS_RC
   logical :: zcorr
   integer :: zcorr_meth
   real(dp) :: radius
-  real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp  
+  real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp
 
   integer :: iIC
   logical :: corr
@@ -86,10 +80,12 @@ program Exo_FMS_RC
 
   integer :: u_nml
 
+  logical :: Bezier
+
   namelist /FMS_RC_nml/ ts_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
           & t_step, nstep, Rd_air, cp_air, grav, mu_z, Tirr, Tint, k_V, k_IR, fl, met, &
           & iIC, corr, table_num, nb, ng, nsp, wl_sh, data_dir, stellarf_sh, n_ck, &
-          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius
+          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius, Bezier
 
   namelist /sp_nml/ sp_list, VMR_tab_sh
 
@@ -242,8 +238,8 @@ program Exo_FMS_RC
     case('ck')
 
        ! Calculate the opacity structure of the column
-       call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), nsp, sp_list(:), VMR(:,:), &
-       & k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
+       call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), &
+       & nsp, sp_list(:), VMR(:,:), k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
 
       ! Include optical depth component from 0 pressure, assuming constant T and p at boundary
       tau_e(:,:,1) = (k_l(:,:,1) * pe(1)) / grav
@@ -290,40 +286,21 @@ program Exo_FMS_RC
 
     !! Two stream radiative transfer step
     select case(ts_scheme)
-    case('Isothermal')
-      ! Isothermal layers approximation
-      call ts_isothermal(nlay, nlev, nb, ng, gw, wn_e, Tl, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
-    case('Isothermal_2')
-      ! Isothermal layers approximation - first order fix for high optical depths
-      !call ts_isothermal_2(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR,  net_F)
-    case('Toon')
-      ! Toon method without scattering
-      !call ts_Toon(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR, net_F)
     case("Toon_scatter")
       ! Toon method with scattering
-      call ts_Toon_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
-    case('Shortchar')
+      call ts_Toon_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
+      & mu_z, Finc, Tint, net_F, olr, asr)
+    case('Shortchar_linear')
       ! Short characteristics method without scattering
-      call ts_short_char(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z_eff, Finc, Tint, net_F, olr, asr)
-    case('Heng')
-      ! Heng flux method without scattering
-      !do b = 1, 2
-        !tau_IRl(b,:) = (tau_IRe(b,1:nlay) + tau_IRe(b,2:nlev)) / 2.0_dp
-      !end do
-      !call ts_Heng(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, tau_IRl, mu_z, F0, Tint, AB, Beta_V, Beta_IR, net_F)
-    case('Lewis_scatter')
-      ! Neil Lewis's code with scattering
-      !call ts_Lewis_scatter(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB,  Beta_V, Beta_IR, &
-      !& sw_a, sw_g, lw_a, lw_g, net_F, 1)
-    case('Lewis_scatter_sw')
-      ! Neil Lewis's code with scattering (shortwave only)
-      !call ts_Lewis_scatter(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB,  Beta_V, Beta_IR, &
-      !& sw_a, sw_g, lw_a, lw_g, net_F, 2)
+      call ts_short_char_linear(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
+      & mu_z_eff, Finc, Tint, net_F, olr, asr)
+    case('Shortchar_Bezier')
+      ! Short characteristics method without scattering
+      call ts_short_char_Bezier(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
+      &  mu_z_eff, Finc, Tint, net_F, olr, asr)
     case('Disort_scatter')
-      call ts_disort_scatter(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, mu_z, Finc, Tint, net_F, olr, asr)
-    case('Mendonca')
-      ! Mendonca method without scattering
-      !call ts_Mendonca(nlay, nlev, Tl, pl, pe, tau_Ve, tau_IRe, mu_z, F0, Tint, AB, Beta_V, Beta_IR, net_F)
+      call ts_disort_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
+      & mu_z, Finc, Tint, net_F, olr, asr)
     case('None')
     case default
       print*, 'Invalid ts_scheme: ', trim(ts_scheme)

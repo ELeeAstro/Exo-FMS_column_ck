@@ -1,11 +1,12 @@
 # Exo-FMS_column_ck
 
-## WORK IN PROGRESS TO GET ALL METHODS WORKING, but Shortchar, Disort & Toon scattering TS modules work.
-
 Elspeth KH Lee - Feb 2022
 
-This is the third part of a series of codes that builds upon different two-stream approaches and schemes, primarily useful for the GCM modeling community.
-This is the correlated-k (corr-k) version, currently set up for 11, 30 or 32 bands as discussed in Kataria et al. (2013), Showman et al. (2009) and Amundsen et al. (2014) respectivly for modelling hot Jupiter atmospheres.
+Major Update History:
+ - Jun 2022 - overhaul of opacities + Bezier methods
+
+This is the third part of a series of codes that builds upon different two-stream approaches and schemes, primarily useful for the GCM modelling community.
+This is the correlated-k (corr-k) version, currently set up for 11, 30 or 32 bands as discussed in Kataria et al. (2013), Showman et al. (2009) and Amundsen et al. (2014) respectively for modelling hot Jupiter atmospheres.
 
 Some useful references useful for corr-k modelling are: \
 Goody et al. (1989) \
@@ -17,29 +18,25 @@ Amundsen et al. (2014, 2017) \
 Lee et al. (2021) \
 and plenty of others...
 
-Unfortunately the numerical results in 1D can in certain circumstances produce small spiky profiles, primarily due to issues either relating to the opacity table fidelity, important optical absorbitng species condensing (at low pressure e.g. TiO) leading to large opacity gradients, or interpolation error or vertical grid resolution.
+Unfortunately the numerical results in 1D can in certain circumstances produce small spiky profiles, primarily due to issues either relating to the opacity table fidelity, important optical absorbing species condensing (at low pressure e.g. TiO) leading to large opacity gradients, interpolation error or vertical grid resolution.
 However, inside a GCM these spikes are typically smoothed out by the dynamical processes.
 
 To compile enter 'make' in the main directory. To remove compiled code enter 'make clean'.
 Some compiler options for gfortran, nvfortran and ifort are provided in the makefile.
 
 This code performs various two-stream approaches from the literature in a non-grey, picket fence context:
-1. Isothermal layer approximation
 2. Toon et al. method (Scattering and non-scattering version)
-3. Short Characteristics method
-4. Heng et al. method
-5. Neil Lewis' scattering code, following Pierrehumbert (2010)
-6. Mendonca et al. method
+3. Short Characteristics method (w. linear or Bezier interpolants)
 7. Two-stream DISORT version (w. modifications by Xianyu Tan)
 
 This emulates a single column inside the Exo-FMS GCM and is useful for testing and developing new techniques
 as they would perform inside a GCM setting. This is also useful to see differences in each method and their various approximations.
 
-For the shortwave fluxes, for methods that do not contain a shortwave scattering mode we include the 'adding method' (Menconca et al. 2015 + references). We detect if any albedo is present in the column, and peform the adding method to calculate the scattered flux, otherwise if there is no albedo only the direct beam is used.
+For the shortwave fluxes, for methods that do not contain a shortwave scattering mode we include the 'adding method' (Mendonca et al. 2015 + references). We detect if any albedo is present in the column, and perform the adding method to calculate the scattered flux, otherwise if there is no albedo only the direct beam is used.
 
 To integrate the Planck function we utilise the method described here (Widger, W. K. and Woodall, M. P. 1976): \
 https://spectralcalc.com/blackbody/inband_radiance.html \
-We found this to be very quick and stable method, producing similar results to the Disort version but with quicker convergence in most cases, espeically with the way it is coded here by using the results of the previous band to get the next value. \
+We found this to be very quick and stable method, producing similar results to the Disort version but with quicker convergence in most cases, especially with the way it is coded here by using the results of the previous band to get the next bin value. \
 An alternative would be to produce a table of integrated fluxes for a temperature range and for each wavelength band and interpolate to that, as is done in other GCM models e.g. SPARC/MITgcm.
 
 We also include a dry convective adjustment schemes, currently only 'Ray_adj', based on Raymond Pierrehumbert's python code.
@@ -49,17 +46,17 @@ We also include a dry convective adjustment schemes, currently only 'Ray_adj', b
 You need to download CIA tables from the HITRAN database, mainly H2-H2, H2-He, H2-H and He-H for gas giants. \
 Typically you add them to the 'cia' data folder.
 
-Our pre-mixed k-tables containd in this repository have over 30 species of interest to exoplanet atmospheres and cool dwarf stars. \
+Our pre-mixed k-tables contained in this repository have over 30 species of interest (including UV-OPT species, Fe, Fe+, SiO, TiO and VO) to exoplanet atmospheres and cool dwarf stars. \
 The pre-mixed tables are valid between a temperature of 200-6100 K and pressure 1e-8 - 1000 bar, making them suitable for UHJ modelling too. \
 Importantly we include the important species responsible for the upper atmosphere temperature inversion as found in Lothringer et al. (2020). \
-Alternative pre-mixed tables without UV-OPT absorbers labeled 'nOPT' in the ck data directory.
-The pre-mixed tables were calculated assuming local rainout (i.e. species that have condensed are at their saturation point)
+Alternative pre-mixed tables without UV-OPT absorbers labeled 'nUVOPT' in the ck data directory. \
+The pre-mixed tables were calculated assuming local rainout (i.e. species that have condensed are at their saturation point (S=1) VMRs)
 
-More individual k-tables can be produced upon request and will be made availible publically at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equivalent extinction (AEE) methods.
+More individual k-tables can be produced upon request and will be made available publicly at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equivalent extinction (AEE) methods.
 
 # Namelist options
 
-### See FMS_RC.nml_RORR for a random overlap resort rebin example using Burrows analytic CE abundances. 
+### See FMS_RC.nml_RORR for a random overlap resort rebin example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_AEE for a adaptive equivalent extinction example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_PM for a pre-mixed example using interpolation from the CE grid.
 
@@ -68,15 +65,8 @@ In the file 'FMS_RC.nml' you can select different options that control the simul
 ### &FMS_RC_nml
 
 ts_scheme: \
-'Isothermal' - Isothermal ts method \
-'Isothermal_2' - Isothermal ts method - high optical depth version \
-'Toon' - Toon et al. ts method \
-'Toon_scatter' - Toon et al. ts method with scattering (IN DEVELOPMENT) \
-'Shortchar' -  Short characteristics method \
-'Heng' - Heng et al. method \
-'Lewis_scatter' - Neil Lewis's scattering code, following Pierrehumbert (2010) \
-'Lewis_scatter_sw' - 'Lewis' but only shortwave scattering ('Shortchar' for IR) \
-'Mendonca' - Mendonca et al. method (IN DEVELOPMENT) \
+'Toon_scatter' - Toon et al. ts method with scattering \
+'Shortchar_linear' -  Short characteristics method with linear interpolants \
 'Disort_scatter' - two-stream DISORT version with scattering
 
 opac_scheme: \
@@ -97,7 +87,7 @@ sm_ax - semi-major axis (AU)
 
 n_ck - number of corr-k species (Pre-mixed = 1)
 ng  - number of g-ordinance values in k-tables \
-nsp - number of species that require VMRs \ 
+nsp - number of species that require VMRs \
 n_cia - number of CIA species \
 n_ray - number of Rayligh scattering species
 
@@ -116,11 +106,17 @@ Tint - Internal temperature
 
 k_V - visible band opacity (m2 kg-1) \
 k_IR - IR band opacity (m2 kg-1) \
-fl - The Heng et al. (2011) parameter used for pressure dependent IR optical depths
+fl - The Heng et al. (2011) parameter used for pressure dependent IR optical depths \
+met - metallicty in dex solar (M/H)
+
+Bezier - use Bezier interpolation for Temperature layer to level interpolation (.True.)
+
+zcorr - include zenith angle correction (.False.) \
+zcorr_meth - zenith angle correction method (1,2)  \
+radius - radius of the planet at surface (m)
 
 iIC - Initial condition selection integer (4 = Parmentier et al. (2015) profile using Tirr and Tint) \
 corr - Flag to perform the adiabatic gradient correction in the initial conditions \
-met - metallicty in dex solar (M/H) \
 table_num - 1 = Parmentier et al. (2015) table with TiO & VO, 2 = without TiO & VO table
 
 ### &sp_nml
@@ -166,12 +162,12 @@ You will need to clean and recompile the code if these are changed.
 
 # Personal recommendations
 
-For non-scattering problems, we generally recommend that the short characteristics method be used, as it is fast, efficient, very stable and also very accurate.
-For scattering problems we recommend the two stream DISORT version, it is very reliable but generally slower compared to other scattering methods.
+For non-scattering problems, we generally recommend that the short characteristics method be used (either linear or Bezier interpolants), as it is fast, efficient, very stable and also very accurate. This is currently what is used inside Exo-FMS for the Hot Jupiter simulations.
+For shortwave scattering problems we recommend the adding method as included (or using the two-stream Toon or DISORT methods), the adding method is generally fast and accurate (enough), especially for grey opacity problems.
+For longwave scattering problems we recommend the two stream Toon scattering version.
+If that fails try the DISORT code, it is very reliable but generally slower compared to other scattering methods.
 
 # Future developments
 
 We will include versions that include multiple-scattering in the longwave in the future. \
-Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions. \
-Add switch for Bezier interpolation (make this .False. in the modules if you want linear interpolation). 
-
+Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions.

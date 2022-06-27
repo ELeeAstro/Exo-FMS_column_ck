@@ -30,7 +30,7 @@ nstep = 100000
 Rd_air = 3556.8
 cp_air = 1.3e4
 grav = 8.98
-mu_z = 0.5
+mu_z = 0.1
 Tirr = 2091.0
 Tint = 571.0
 
@@ -38,6 +38,12 @@ k_V = 6e-4
 k_IR = 1e-3
 fl = 1.0
 met = 0.0
+
+Bezier = .True.
+
+zcorr = .False.
+zcorr_meth = 1
+radius = 7.1492e7
 
 iIC = 4
 corr = .True.
@@ -48,7 +54,7 @@ table_num = 2
 &sp_nml
 
 !Burrows species list
-sp_list = 'H2', 'He', 'H2O','CH4','CO', 'N2', 'NH3'
+sp_list = 'H2', 'He', 'H2O', 'CH4','CO', 'N2', 'NH3'
 
 /
 
@@ -65,9 +71,10 @@ PM = .False.
 RORR = .True.
 AEE = .False.
 ck_form = 2, 2, 2, 2
-ck_sp =  'H2O', 'CH4', 'CO', 'NH3'
-ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
-'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt'
+ck_sp = 'H2O','CH4', 'CO', 'NH3'
+ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
+'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt',
+
 
 /
 
