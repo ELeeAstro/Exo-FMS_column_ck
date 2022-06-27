@@ -25,7 +25,7 @@ To compile enter 'make' in the main directory. To remove compiled code enter 'ma
 Some compiler options for gfortran, nvfortran and ifort are provided in the makefile.
 
 This code performs various two-stream approaches from the literature in a non-grey, picket fence context:
-2. Toon et al. method (Scattering and non-scattering version)
+2. Toon et al. method (w. scattering version)
 3. Short Characteristics method (w. linear or Bezier interpolants)
 7. Two-stream DISORT version (w. modifications by Xianyu Tan)
 

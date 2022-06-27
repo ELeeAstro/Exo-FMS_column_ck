@@ -33,7 +33,6 @@ program Exo_FMS_RC
   real(dp), parameter :: Rsun = 6.95700e8_dp
   real(dp), parameter :: au = 1.495978707e11_dp
 
-
   integer :: n_ck, n_cia, n_ray
   character(len=50) :: data_dir, stellarf_sh, wl_sh
 
@@ -286,7 +285,7 @@ program Exo_FMS_RC
 
     !! Two stream radiative transfer step
     select case(ts_scheme)
-    case("Toon_scatter")
+    case('Toon_scatter')
       ! Toon method with scattering
       call ts_Toon_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
       & mu_z, Finc, Tint, net_F, olr, asr)

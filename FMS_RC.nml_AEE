@@ -1,6 +1,6 @@
 &FMS_RC_nml
 
-ts_scheme = 'Shortchar'
+ts_scheme = 'Shortchar_Bezier'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
 CE_scheme = 'Burrows'
@@ -30,7 +30,7 @@ nstep = 100000
 Rd_air = 3556.8
 cp_air = 1.3e4
 grav = 8.98
-mu_z = 0.1
+mu_z = 0.5
 Tirr = 2091.0
 Tint = 571.0
 
@@ -83,7 +83,6 @@ ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/
 cia_form = 1, 1
 cia_sp = 'H2-H2', 'H2-He'
 cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia'
-
 
 /
 
