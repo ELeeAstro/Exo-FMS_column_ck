@@ -425,7 +425,7 @@ contains
       w = dx1/(dx + dx1)
       wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
       wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if (w < min(wlim,wlim1) .or. w > max(wlim,wlim1)) then
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
         w = 1.0_dp
       end if
       yc = yi(2) - dx/2.0_dp * (w*dy/dx + (1.0_dp - w)*dy1/dx1)
@@ -437,7 +437,7 @@ contains
       w = dx/(dx + dx1)
       wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
       wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if (w < min(wlim,wlim1) .or. w > max(wlim,wlim1)) then
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
         w = 1.0_dp
       end if
       yc = yi(2) + dx1/2.0_dp * (w*dy1/dx1 + (1.0_dp - w)*dy/dx)
