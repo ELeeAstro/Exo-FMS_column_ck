@@ -87,6 +87,7 @@ module ck_opacity_mod
 
   ! CK table data - read in pre-calculated cm2 molecule-1 k-coefficents for each band
   logical :: PM, RORR, AEE
+  integer :: ck_interp
   integer :: n_ck
   integer, allocatable, dimension(:) :: ck_form
   type(ck_table), allocatable, dimension(:) :: ck
@@ -107,7 +108,7 @@ module ck_opacity_mod
   character(len=10), allocatable, dimension(:) :: Ray_sp
   character(len=250), allocatable, dimension(:) :: Ray_paths
 
-  namelist /ck_nml/ PM, RORR, AEE, ck_sp, ck_paths, ck_form
+  namelist /ck_nml/ PM, RORR, AEE, ck_sp, ck_paths, ck_form, ck_interp
   namelist /CIA_nml/ CIA_sp, CIA_paths, CIA_form
   namelist /Ray_nml/ Ray_sp, Ray_paths, Ray_form
 
@@ -178,7 +179,11 @@ contains
 
         !print*, b, 'ck_interp'
         do k = 1, nlay
-          call interp_ck_sp_TP(n_ck, n_g, Tl(k), pl(k), b, k_ck_sp(:,:,k))
+          if (ck_interp == 1) then
+            call interp_ck_sp_TP(n_ck, n_g, Tl(k), pl(k), b, k_ck_sp(:,:,k))
+          else if (ck_interp == 2) then
+            call interp_ck_sp_TP_Bezier(n_ck, n_g, Tl(k), pl(k), b, k_ck_sp(:,:,k))
+          end if
         end do
 
         if (RORR .eqv. .True.) then
@@ -202,7 +207,8 @@ contains
       if (n_CIA > 0) then
         !print*, b, 'conti'
         do k = 1, nlay
-          call interp_conti(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+          !call interp_conti(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+          call interp_conti_Bezier(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
         end do
       else
         k_cont(:) = 0.0_dp
@@ -398,7 +404,7 @@ contains
 
   end subroutine random_overlap
 
-  subroutine interp_ck_sp_TP(n_ck,n_g,  T, P, b, k_ck_sp)
+  subroutine interp_ck_sp_TP(n_ck,n_g, T, P, b, k_ck_sp)
     implicit none
 
     integer, intent(in) :: n_ck, n_g, b
@@ -509,6 +515,149 @@ contains
     end do
 
   end subroutine interp_ck_sp_TP
+
+  subroutine interp_ck_sp_TP_Bezier(n_ck,n_g, T, P, b, k_ck_sp)
+    implicit none
+
+    integer, intent(in) :: n_ck, n_g, b
+    real(dp), intent(in) :: T, P
+    real(dp), dimension(n_ck,n_g), intent(out) :: k_ck_sp
+
+    integer :: s, g
+    integer :: iT1, iT2, iT3, iP1, iP2, iP3
+    real(dp) :: lT, lP
+
+    real(dp), dimension(3) :: lPa, lTa, lka, lka_ck
+
+    !! A large if block statement is used to determine if the T-p point
+    !! is within the ck table, then interpolates.
+    !! If T > Tmax, then T = Tmax, if P > Pmax, P = Pmax and if P < Pmin, P = Pmin
+    !! This is done to avoid crashes with k-tables that may not cover the intendend T-p range
+    !! IT IS AVDISED TO CREATE k-tables WITHIN APPRORIATE T-p RANGES!!
+
+    lT = log10(T)
+    lP = log10(P)
+
+    do s = 1, n_ck
+
+      ! Find temperature grid index triplet
+      call locate(ck(s)%T(:),T,iT2)
+      iT1 = iT2 - 1
+      iT3 = iT2 + 1
+
+      if (iT1 <= 0) then
+        iT1 = 1
+        iT2 = 2
+        iT3 = 3
+      else if (iT3 > ck(s)%nT) then
+        iT1 = ck(s)%nT - 2
+        iT2 = ck(s)%nT - 1
+        iT3 = ck(s)%nT
+      end if
+
+      lTa(1) = ck(s)%lT(iT1)
+      lTa(2) = ck(s)%lT(iT2)
+      lTa(3) = ck(s)%lT(iT3)
+
+      ! Find pressure grid index triplet
+      call locate(ck(s)%P(:),P,iP2)
+      iP1 = iP2 - 1
+      iP3 = iP2 + 1
+
+      if (iP1 <= 0) then
+        iP1 = 1
+        iP2 = 2
+        iP3 = 3
+      else if (iP3 > ck(s)%nP) then
+        iP1 = ck(s)%nP - 2
+        iP2 = ck(s)%nP - 1
+        iP3 = ck(s)%nP
+      end if
+
+      lPa(1) = ck(s)%lP(iP1)
+      lPa(2) = ck(s)%lP(iP2)
+      lPa(3) = ck(s)%lP(iP3)
+
+      if (T >= ck(s)%T(ck(s)%nT)) then
+        ! Temperature is too high, outside table range - use highest availible T data
+        if (P >= ck(s)%P(ck(s)%nP)) then
+           ! Pressure is too high, outside table range - use highest availible P data
+            k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,ck(s)%nT,ck(s)%nP,:)
+        else if (P <= ck(s)%P(1)) then
+           ! Pressure is too low, outside table range - use highest lowest P data
+           k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,ck(s)%nT,1,:)
+        else
+          ! Pressure is within table range, perform Bezier interpolation at highest T
+          do g = 1, ck(s)%nG
+            lka(1) = ck(s)%kap(b,ck(s)%nT,iP1,g)
+            lka(2) = ck(s)%kap(b,ck(s)%nT,iP2,g)
+            lka(3) = ck(s)%kap(b,ck(s)%nT,iP3,g)
+            call Bezier_interp(lPa(:), lka(:), 3, lP, k_ck_sp(s,g))
+            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
+          end do
+        end if
+      else if (T <= ck(s)%T(1)) then
+        ! Temperature is too low, outside table range - use lowest availible T data
+        if (P >= ck(s)%P(ck(s)%nP)) then
+           ! Pressure is too high, outside table range - use highest availible P data
+            k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,1,ck(s)%nP,:)
+        else if (P <= ck(s)%P(1)) then
+           ! Pressure is too low, outside table range - use highest lowest P data
+           k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,1,1,:)
+        else
+          ! Pressure is within table range, perform linear interpolation at highest T
+          do g = 1, ck(s)%nG
+            lka(1) = ck(s)%kap(b,1,iP1,g)
+            lka(2) = ck(s)%kap(b,1,iP2,g)
+            lka(3) = ck(s)%kap(b,1,iP3,g)
+            call Bezier_interp(lPa(:), lka(:), 3, lP, k_ck_sp(s,g))
+            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
+          end do
+        end if
+      else
+        ! Temperature is within the normal range
+        if (P >= ck(s)%P(ck(s)%nP)) then
+          ! Pressure is too high, outside table range - use highest availible P
+          do g = 1, ck(s)%nG
+            lka(1) = ck(s)%kap(b,iT1,ck(s)%nP,g)
+            lka(2) = ck(s)%kap(b,iT2,ck(s)%nP,g)
+            lka(3) = ck(s)%kap(b,IT3,ck(s)%nP,g)
+            call Bezier_interp(lTa(:), lka(:), 3, lT, k_ck_sp(s,g))
+            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
+          end do
+        else if (P <= ck(s)%P(1)) then
+          ! Pressure is too low, outside table range - use lowest availible P
+          do g = 1, ck(s)%nG
+            lka(1) = ck(s)%kap(b,iT1,1,g)
+            lka(2) = ck(s)%kap(b,iT2,1,g)
+            lka(3) = ck(s)%kap(b,IT3,1,g)
+            call Bezier_interp(lTa(:), lka(:), 3, lT, k_ck_sp(s,g))
+            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
+          end do
+        else
+          ! Both pressure and temperature are within table bounds, perform Bezier interpolation 4 times
+          do g = 1, ck(s)%nG
+            lka(1) = ck(s)%kap(b,iT1,iP1,g)
+            lka(2) = ck(s)%kap(b,iT1,iP2,g)
+            lka(3) = ck(s)%kap(b,IT1,iP3,g)
+            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(1)) ! Result at T1, P_in
+            lka(1) = ck(s)%kap(b,iT2,iP1,g)
+            lka(2) = ck(s)%kap(b,iT2,iP2,g)
+            lka(3) = ck(s)%kap(b,IT2,iP3,g)
+            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(2)) ! Result at T2, P_in
+            lka(1) = ck(s)%kap(b,iT3,iP1,g)
+            lka(2) = ck(s)%kap(b,iT3,iP2,g)
+            lka(3) = ck(s)%kap(b,IT3,iP3,g)
+            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(3)) ! Result at T3, P_in
+            call Bezier_interp(lTa(:), lka_ck(:), 3, lT, k_ck_sp(s,g)) ! Result at T_in, P_in
+            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
+          end do
+        end if
+      end if
+
+    end do
+
+  end subroutine interp_ck_sp_TP_Bezier
 
   subroutine interp_conti(n_CIA, n_sp, n_b, b,  T, N, RH, VMR, k_cont)
     implicit none
@@ -623,6 +772,121 @@ contains
     k_cont = k_cont / RH
 
   end subroutine interp_conti
+
+
+  subroutine interp_conti_Bezier(n_CIA, n_sp, n_b, b,  T, N, RH, VMR, k_cont)
+    implicit none
+
+    integer, intent(in) :: b, n_CIA, n_sp, n_b
+    real(dp), intent(in) :: T, N, RH
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(out) :: k_cont
+
+    integer, allocatable, dimension(:,:), save :: iwn, iwn1
+    logical, save :: f_call = .True.
+
+    integer :: s
+    integer :: iT, iT1
+    real(dp) :: k_Hm, k_ff
+    real(dp) :: x0, x1, y0, y1, xval, yval
+    real(dp) :: a00, a01, a10, a11, aval
+
+    ! If this is the first call, find the wavenumber index numbers
+    ! so we don't have to calculate them each time
+    if (f_call .eqv. .True.) then
+      if (allocated(iwn) .eqv. .False.) then
+        allocate(iwn(n_CIA,n_b), iwn1(n_CIA,n_b))
+      end if
+      do s = 1, n_CIA
+        if ((trim(CIA(s)%sp) == 'H-') .or. (CIA(s)%form == 2)) then
+          cycle
+        end if
+        call locate(CIA(s)%wn(:),wn(b),iwn(s,b))
+        iwn1(s,b) = iwn(s,b) + 1
+        !print*, wn(b), iwn(s,b), iwn1(s,b), CIA(s)%wn(iwn(s,b)), CIA(s)%wn(iwn1(s,b))
+      end do
+      if (b == n_b) then
+        f_call = .False.
+      end if
+    end if
+
+    k_cont = 0.0_dp
+    do s = 1, n_CIA
+
+      if (trim(CIA(s)%sp) == 'H-') then
+        call CIA_Hminus(n_sp, s, b, T, N, VMR, k_Hm)
+        k_cont = k_cont + k_Hm
+        cycle
+      end if
+      if (CIA(s)%form == 2) then
+        call CIA_ff(n_sp, s, b, T, N, VMR, k_ff)
+        k_cont = k_cont + k_ff
+        !print*, s, b, k_ff
+        cycle
+      end if
+
+      ! If band is outside table wavelength range
+      if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
+        cycle
+      end if
+
+      ! Locate required T indexes in CIA wn array for layer temperature
+      call locate(CIA(s)%T(:),T,iT)
+      iT1 = iT + 1
+
+      !! Perform temperature edge case check
+      if (iT < 1) then
+        ! Temperature of layer is outside lower bounds of table
+        ! Perform wn linear interp to minval(T)
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        y0 = CIA(s)%kap(iwn(s,b),1) ; y1 = CIA(s)%kap(iwn1(s,b),1)
+
+        ! Perform log linear interpolation
+        call linear_interp(xval, x0, x1, y0, y1, yval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + yval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      else if (iT1 > CIA(s)%nT) then
+
+        ! Temperature of layer is outside upper bounds of table
+        ! Perform wn linear interp to maxval(T)
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        y0 = CIA(s)%kap(iwn(s,b),CIA(s)%nT) ; y1 = CIA(s)%kap(iwn1(s,b),CIA(s)%nT)
+
+        ! Perform log linear interpolation
+        call linear_interp(xval, x0, x1, y0, y1, yval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + yval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      else
+
+        !! wn and T are within the table bounds
+        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
+        yval = T ; y0 = CIA(s)%T(iT) ; y1 = CIA(s)%T(iT1)
+        a00 = CIA(s)%kap(iwn(s,b),iT) ; a10 = CIA(s)%kap(iwn1(s,b),iT)
+        a01 = CIA(s)%kap(iwn(s,b),iT1) ; a11 = CIA(s)%kap(iwn1(s,b),iT1)
+
+        ! Perform bi-linear interpolation
+        call bilinear_interp(xval, yval, x0, x1, y0, y1, a00, a10, a01, a11, aval)
+
+        ! Add to result to work variable in units of [cm-1]
+        k_cont = k_cont + aval &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+
+      end if
+
+    end do
+
+    k_cont = k_cont / RH
+
+  end subroutine interp_conti_Bezier
 
   subroutine calc_Rayleigh(n_Ray, n_sp, b, Nl, RH, VMR, k_Ray)
     implicit none
@@ -1307,6 +1571,51 @@ contains
     aval = 10.0_dp**(aval)
 
   end subroutine bilinear_log_interp
+
+  ! Perform Bezier interpolation
+  subroutine Bezier_interp(xi, yi, ni, x, y)
+    implicit none
+
+    integer, intent(in) :: ni
+    real(dp), dimension(ni), intent(in) :: xi, yi
+    real(dp), intent(in) :: x
+    real(dp), intent(out) :: y
+
+    real(dp) :: xc, dx, dx1, dy, dy1, w, yc, t, wlim, wlim1
+
+    !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
+    dx = xi(2) - xi(1)
+    dx1 = xi(3) - xi(2)
+    dy = yi(2) - yi(1)
+    dy1 = yi(3) - yi(2)
+
+    if (x > xi(1) .and. x < xi(2)) then
+      ! left hand side interpolation
+      !print*,'left'
+      w = dx1/(dx + dx1)
+      wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
+      yc = yi(2) - dx/2.0_dp * (w*dy/dx + (1.0_dp - w)*dy1/dx1)
+      t = (x - xi(1))/dx
+      y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
+    else ! (x > xi(2) and x < xi(3)) then
+      ! right hand side interpolation
+      !print*,'right'
+      w = dx/(dx + dx1)
+      wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
+      yc = yi(2) + dx1/2.0_dp * (w*dy1/dx1 + (1.0_dp - w)*dy/dx)
+      t = (x - xi(2))/(dx1)
+      y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
+    end if
+
+  end subroutine Bezier_interp
 
   subroutine sort2(N,RA,RB)
     integer, intent(in) :: N

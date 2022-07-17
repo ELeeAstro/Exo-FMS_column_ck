@@ -28,8 +28,8 @@ module CE_mod
   ! First call to module flag
   logical :: first_call = .True.
 
-  public :: CE_interpolate, CE_Burrows
-  private :: CE_interpolate_init, locate, linear_interp, bilinear_interp
+  public :: CE_interpolate_bilinear, CE_Burrows, CE_interpolate_Bezier
+  private :: CE_interpolate_init, locate, linear_interp, bilinear_interp, Bezier_interp
 
 contains
 
@@ -104,7 +104,7 @@ contains
 
   end subroutine CE_Burrows
 
-  subroutine CE_interpolate(P_in, T_in, m_in, m_size, VMR_table, x_out, mu_out)
+  subroutine CE_interpolate_bilinear(P_in, T_in, m_in, m_size, VMR_table, x_out, mu_out)
     implicit none
 
     !! Input:
@@ -209,7 +209,152 @@ contains
      end do
    end if
 
-  end subroutine CE_interpolate
+  end subroutine CE_interpolate_bilinear
+
+
+  subroutine CE_interpolate_Bezier(P_in, T_in, m_in, m_size, VMR_table, x_out, mu_out)
+    implicit none
+
+    !! Input:
+    ! - m_size = size of molecule array
+    ! - P_in = input pressure [bar]
+    ! - T_in = input temperature [K]
+    ! - m_in = name array of species to interpolate
+    !! Output:
+    ! - x_out = VMR of each species @ P_in and T_in
+    ! - mu_out = mean molecular weight @ P_in and T_in
+
+    integer, intent(in) :: m_size
+    character(len=50) :: VMR_table
+    real(dp), intent(in) :: P_in, T_in
+    character(len=4), dimension(m_size), intent(in) :: m_in
+    real(dp), intent(out), dimension(m_size) :: x_out
+    real(dp), intent(out) :: mu_out
+
+    integer :: i_p1, i_p2, i_p3, i_t1, i_t2, i_t3
+    real(dp) :: lP_in, lT_in
+    real(dp), dimension(3) :: lTa, lPa, mua, xa, xa_out, mua_out
+
+    !! Work variables
+    integer :: m
+
+
+    ! Initialise - read VMR from table for T and p grid
+    if (first_call .eqv. .True.) then
+      call CE_interpolate_init(VMR_table)
+      first_call = .False.
+    end if
+
+    lP_in = log10(P_in)
+    lT_in = log10(T_in)
+
+    ! Find upper and lower T and P triplet indexes
+    call locate(P_t, nP, P_in, i_p2)
+    i_p1 = i_p2 - 1
+    i_p3 = i_p2 + 1
+
+    if (i_p1 <= 0) then
+      i_p1 = 1
+      i_p2 = 2
+      i_p3 = 3
+    else if (i_p3 > nP) then
+      i_p1 = nP - 2
+      i_p2 = nP - 1
+      i_p3 = nP
+    end if
+
+    ! Check if input temperature is within table range
+    if (T_in <= T_t(1)) then
+
+      ! Perform Bezier interpolation at minimum table temperature
+      lPa(1) = lP_t(i_p1)
+      lPa(2) = lP_t(i_p2)
+      lPa(3) = lP_t(i_p3)
+      mua(1) = mu_t(i_p1,1)
+      mua(2) = mu_t(i_p2,1)
+      mua(3) = mu_t(i_p3,1)
+      call Bezier_interp(lPa(:), mua(:), 3, lP_in, mu_out)
+
+      do m = 1, m_size
+        xa(1) = x_t(m,i_p1,1)
+        xa(2) = x_t(m,i_p2,1)
+        xa(3) = x_t(m,i_p3,1)
+        call Bezier_interp(lPa(:), xa(:), 3, lP_in, x_out(m))
+        x_out(m) = 10.0_dp**x_out(m)
+      end do
+
+    else if (T_in >= T_t(nT)) then
+
+      ! Perform Bezier interpolation at maximum table temperature
+      lPa(1) = lP_t(i_p1)
+      lPa(2) = lP_t(i_p2)
+      lPa(3) = lP_t(i_p3)
+      mua(1) = mu_t(i_p1,nT)
+      mua(2) = mu_t(i_p2,nT)
+      mua(3) = mu_t(i_p3,nT)
+      call Bezier_interp(lPa(:), mua(:), 3, lP_in, mu_out)
+
+      do m = 1, m_size
+        xa(1) = x_t(m,i_p1,nT)
+        xa(2) = x_t(m,i_p2,nT)
+        xa(3) = x_t(m,i_p3,nT)
+        call Bezier_interp(lPa(:), xa(:), 3, lP_in, x_out(m))
+        x_out(m) = 10.0_dp**x_out(m)
+      end do
+
+    else
+
+      ! Perform 2D Bezier interpolation by performing interpolation 4 times
+
+      ! Find temperature index triplet
+      call locate(T_t, nT, T_in, i_t2)
+      i_t1 = i_t2 - 1
+      i_t3 = i_t2 + 1
+
+      lPa(1) = lP_t(i_p1)
+      lPa(2) = lP_t(i_p2)
+      lPa(3) = lP_t(i_p3)
+
+      mua(1) = mu_t(i_p1,i_t1)
+      mua(2) = mu_t(i_p2,i_t1)
+      mua(3) = mu_t(i_p3,i_t1)
+      call Bezier_interp(lPa(:), mua(:), 3, lP_in, mua_out(1)) ! Result at T1, P_in
+      mua(1) = mu_t(i_p1,i_t2)
+      mua(2) = mu_t(i_p2,i_t2)
+      mua(3) = mu_t(i_p3,i_t2)
+      call Bezier_interp(lPa(:), mua(:), 3, lP_in, mua_out(2)) ! Result at T2, P_in
+      mua(1) = mu_t(i_p1,i_t3)
+      mua(2) = mu_t(i_p2,i_t3)
+      mua(3) = mu_t(i_p3,i_t3)
+      call Bezier_interp(lPa(:), mua(:), 3, lP_in, mua_out(3)) ! Result at T3, P_in
+      lTa(1) = lT_t(i_t1)
+      lTa(2) = lT_t(i_t2)
+      lTa(3) = lT_t(i_t3)
+      call Bezier_interp(lTa(:), mua_out(:), 3, lT_in, mu_out) ! Result at T_in, P_in
+
+      do m = 1, m_size
+        xa(1) = x_t(m,i_p1,i_t1)
+        xa(2) = x_t(m,i_p2,i_t1)
+        xa(3) = x_t(m,i_p3,i_t1)
+        call Bezier_interp(lPa(:), xa(:), 3, lP_in, xa_out(1)) ! Result at T1, P_in
+        xa(1) = x_t(m,i_p1,i_t2)
+        xa(2) = x_t(m,i_p2,i_t2)
+        xa(3) = x_t(m,i_p3,i_t2)
+        call Bezier_interp(lPa(:), xa(:), 3, lP_in, xa_out(2)) ! Result at T2, P_in
+        xa(1) = x_t(m,i_p1,i_t3)
+        xa(2) = x_t(m,i_p2,i_t3)
+        xa(3) = x_t(m,i_p3,i_t3)
+        call Bezier_interp(lPa(:), xa(:), 3, lP_in, xa_out(3)) ! Result at T3, P_in
+        lTa(1) = lT_t(i_t1)
+        lTa(2) = lT_t(i_t2)
+        lTa(3) = lT_t(i_t3)
+        call Bezier_interp(lTa(:), xa_out(:), 3, lT_in, x_out(m)) ! Result at T_in, P_in
+        x_out(m) = 10.0_dp**x_out(m)
+      end do
+
+    end if
+
+  end subroutine CE_interpolate_Bezier
 
   subroutine CE_interpolate_init(VMR_table)
     implicit none
@@ -304,5 +449,50 @@ contains
       & + a22 * (xval - x1) * (yval - y1) * norm
 
   end subroutine bilinear_interp
+
+  ! Perform Bezier interpolation
+  subroutine Bezier_interp(xi, yi, ni, x, y)
+    implicit none
+
+    integer, intent(in) :: ni
+    real(dp), dimension(ni), intent(in) :: xi, yi
+    real(dp), intent(in) :: x
+    real(dp), intent(out) :: y
+
+    real(dp) :: xc, dx, dx1, dy, dy1, w, yc, t, wlim, wlim1
+
+    !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
+    dx = xi(2) - xi(1)
+    dx1 = xi(3) - xi(2)
+    dy = yi(2) - yi(1)
+    dy1 = yi(3) - yi(2)
+
+    if (x > xi(1) .and. x < xi(2)) then
+      ! left hand side interpolation
+      !print*,'left'
+      w = dx1/(dx + dx1)
+      wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
+      yc = yi(2) - dx/2.0_dp * (w*dy/dx + (1.0_dp - w)*dy1/dx1)
+      t = (x - xi(1))/dx
+      y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
+    else ! (x > xi(2) and x < xi(3)) then
+      ! right hand side interpolation
+      !print*,'right'
+      w = dx/(dx + dx1)
+      wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
+      wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
+      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
+        w = 1.0_dp
+      end if
+      yc = yi(2) + dx1/2.0_dp * (w*dy1/dx1 + (1.0_dp - w)*dy/dx)
+      t = (x - xi(2))/(dx1)
+      y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
+    end if
+
+  end subroutine Bezier_interp
 
 end module CE_mod

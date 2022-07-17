@@ -5,7 +5,7 @@ opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
 CE_scheme = 'Burrows'
 
-data_dir = 'data'
+data_dir = 'data/'
 nb = 11
 wl_sh = 'wavelengths_GCM_11.txt'
 stellarf_sh = 'sw_band_flux_HD209_11.txt'
@@ -70,6 +70,7 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 PM = .False.
 RORR = .True.
 AEE = .False.
+ck_interp = 2
 ck_form = 2, 2, 2, 2
 ck_sp = 'H2O','CH4', 'CO', 'NH3'
 ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',

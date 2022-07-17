@@ -25,9 +25,9 @@ To compile enter 'make' in the main directory. To remove compiled code enter 'ma
 Some compiler options for gfortran, nvfortran and ifort are provided in the makefile.
 
 This code performs various two-stream approaches from the literature in a non-grey, picket fence context:
-2. Toon et al. method (w. scattering version)
-3. Short Characteristics method (w. linear or Bezier interpolants)
-7. Two-stream DISORT version (w. modifications by Xianyu Tan)
+1. Toon et al. method (w. scattering version)
+2. Short Characteristics method (w. linear or Bezier interpolants)
+3. Two-stream DISORT version (w. modifications by Xianyu Tan)
 
 This emulates a single column inside the Exo-FMS GCM and is useful for testing and developing new techniques
 as they would perform inside a GCM setting. This is also useful to see differences in each method and their various approximations.
@@ -74,6 +74,12 @@ opac_scheme: \
 
 adj_scheme: \
 'Ray_dry' - Ray Pierrehumbert's dry convective adjustment scheme
+
+CE_scheme: \
+'Burrows' - use Burrows analytic CE abundances \
+'Interp_bilinear' - use bilinear interpolation from CE table \
+'Interp_Bezier' - use Bezier interpolation from CE table \
+'Min' - use CE minimisation scheme (in development)
 
 The option 'None' for each of these scheme will it off (e.g. To run without conv adjustment set adj_scheme = 'None')
 
@@ -135,6 +141,7 @@ gw - the Gaussian weights for the k-tables
 PM - .True. (for pre-mixed tables), .False. \
 RORR - .True. (for random overlap resort rebin), .False. \
 AEE - .True. (for adaptive equivalent extinction), .False. \
+ck_interp -  1 = bilinear interpolate ck tables, 2 = Bezier interpolate ck tables \
 ck_form  - format of k-tables (2 = Helios-k format used here) \
 ck_sp - names of species for corr-k routines ('PM' for pre-mixed) \
 ck_paths - path to the corr-k tables in order of species in ck_sp

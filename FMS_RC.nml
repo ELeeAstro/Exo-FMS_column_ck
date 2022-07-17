@@ -3,7 +3,7 @@
 ts_scheme = 'Shortchar_Bezier'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
-CE_scheme = 'Interp'
+CE_scheme = 'Interp_Bezier'
 
 data_dir = 'data/'
 nb = 11
@@ -70,6 +70,7 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 PM = .True.
 RORR = .False.
 AEE = .False.
+ck_interp = 2
 ck_form = 2
 ck_sp = 'PM'
 ck_paths = 'data/ck/PM_ck_HELIOSK_cond_11_nUVOPT.txt'

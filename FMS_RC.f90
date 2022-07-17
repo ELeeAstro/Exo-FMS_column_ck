@@ -17,7 +17,7 @@ program Exo_FMS_RC
   use ts_short_char_mod_linear, only : ts_short_char_linear
   use ts_short_char_mod_Bezier, only : ts_short_char_Bezier
   use ts_disort_scatter_mod, only : ts_disort_scatter
-  use CE_mod, only : CE_interpolate, CE_Burrows
+  use CE_mod, only : CE_interpolate_bilinear, CE_Burrows, CE_interpolate_Bezier
   use ck_opacity_mod, only : ck_opacity
   use IC_mod, only : IC_profile
   use dry_conv_adj_mod, only : Ray_dry_adj
@@ -213,9 +213,14 @@ program Exo_FMS_RC
         call CE_Burrows(Tl(k), pl(k), nsp, VMR(:,k))
         !print*, Tl(k), pl(k), mu(k), VMR(:,k)
       end do
-    case('Interp')
+    case('Interp_bilinear')
       do k = 1, nlay
-        call CE_interpolate(pl(k)/1e5_dp,Tl(k),sp_list(:),nsp,VMR_tab_sh,VMR(:,k),mu(k))
+        call CE_interpolate_bilinear(pl(k)/1e5_dp,Tl(k),sp_list(:),nsp,VMR_tab_sh,VMR(:,k),mu(k))
+        !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
+      end do
+    case('Interp_Bezier')
+      do k = 1, nlay
+        call CE_interpolate_Bezier(pl(k)/1e5_dp,Tl(k),sp_list(:),nsp,VMR_tab_sh,VMR(:,k),mu(k))
         !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
       end do
     case('Min')
