@@ -1,0 +1,95 @@
+&FMS_RC_nml
+
+ts_scheme = 'Shortchar_Bezier'
+opac_scheme = 'ck'
+adj_scheme = 'Ray_dry'
+CE_scheme = 'Interp_Bezier'
+
+data_dir = 'data/'
+nb = 34
+wl_sh = 'wavelengths_GCM_34.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_W18_34.txt'
+
+Rs = 1.23
+sm_ax = 0.02047
+
+n_ck = 1
+ng = 8
+nsp = 5
+n_cia = 7
+n_ray = 4
+
+nlay = 54
+a_sh = 'Hybrid_sigma_grid_a_54.txt'
+b_sh = 'Hybrid_sigma_grid_b_54.txt'
+
+pref = 1.0e8
+
+t_step = 15.0
+nstep = 100000
+Rd_air = 3556.8
+cp_air = 1.3e4
+grav = 190
+mu_z = 0.5
+Tirr = 3383.0
+Tint = 572.0
+
+k_V = 6e-4
+k_IR = 1e-3
+fl = 1.0
+met = 0.0
+
+Bezier = .True.
+
+zcorr = .False.
+zcorr_meth = 1
+radius = 7.1492e7
+
+iIC = 4
+corr = .True.
+table_num = 1
+
+/
+
+&sp_nml
+
+sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
+VMR_tab_sh = 'data/UHJ_interp_co_1x_GCM.txt'
+
+/
+
+&gw_nml
+
+gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635,
+0.01630362887156367, 0.01630362887156367, 0.00869637112843635
+
+/
+
+&ck_nml
+
+PM = .True.
+RORR = .False.
+AEE = .False.
+ck_interp = 2
+ck_form = 2
+ck_sp = 'PM'
+ck_paths = 'data/ck/PM_ck_HELIOSK_cond_34.txt'
+
+/
+
+&cia_nml
+
+cia_form = 1, 1, 1, 1, 0, 2, 2
+cia_sp = 'H2-H2', 'H2-He', 'H2-H', 'He-H', 'H-', 'He-', 'H2-'
+cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H_2011.cia',
+'data/cia/He-H_2011.cia', '', 'data/cia/He-_ff.txt', 'data/cia/H2-_ff.txt'
+
+/
+
+&ray_nml
+
+ray_form = 1, 1, 1, 1
+ray_sp = 'H2', 'He', 'H', 'e-'
+ray_paths = 'data/ray/Ray_H2_34.txt', 'data/ray/Ray_He_34.txt', 'data/ray/Ray_H_34.txt', 'data/ray/Ray_e-_34.txt'
+
+/

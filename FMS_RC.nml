@@ -6,9 +6,9 @@ adj_scheme = 'Ray_dry'
 CE_scheme = 'Interp_Bezier'
 
 data_dir = 'data/'
-nb = 11
-wl_sh = 'wavelengths_GCM_11.txt'
-stellarf_sh = 'sw_band_flux_HD209_11.txt'
+nb = 34
+wl_sh = 'wavelengths_GCM_34.txt'
+stellarf_sh = 'sw_band_flux_HD209_34.txt'
 
 Rs = 1.203
 sm_ax = 0.04747
@@ -47,7 +47,7 @@ radius = 7.1492e7
 
 iIC = 4
 corr = .True.
-table_num = 2
+table_num = 1
 
 /
 
@@ -73,7 +73,7 @@ AEE = .False.
 ck_interp = 2
 ck_form = 2
 ck_sp = 'PM'
-ck_paths = 'data/ck/PM_ck_HELIOSK_cond_11_nUVOPT.txt'
+ck_paths = 'data/ck/PM_ck_HELIOSK_cond_34.txt'
 
 /
 
@@ -90,6 +90,6 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H
 
 ray_form = 1, 1, 1, 1
 ray_sp = 'H2', 'He', 'H', 'e-'
-ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt', 'data/ray/Ray_H_11.txt', 'data/ray/Ray_e-_11.txt'
+ray_paths = 'data/ray/Ray_H2_34.txt', 'data/ray/Ray_He_34.txt', 'data/ray/Ray_H_34.txt', 'data/ray/Ray_e-_34.txt'
 
 /
