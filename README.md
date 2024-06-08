@@ -57,6 +57,14 @@ For the longwave radiation, we use the weighted essentially non oscillatory orde
 
 We also include dry convective adjustment schemes, currently 'Ray_adj', based on Raymond Pierrehumbert's python code and mixing length theory (MLT).
 
+Results can be plotted using the plot_TP.py and plot_flux.py python codes in the main directory.
+
+# Auxiliary codes
+
+In the hybrid_sigma directory you can use gen_hybrid_sigma_grid.py to generate a custom hybrid sigma grid for use here or in your GCMs.
+
+In the opac_data/ray directory you can use Gen_Ray_xsec.py to generate new Rayleigh scattering cross sections for different wavelength bands (and add new ones if you wish).
+
 # Requirements & Opacity data:
 
 You need to download CIA tables from the HITRAN database, mainly H2-H2, H2-He, H2-H and He-H for gas giants. \
@@ -101,7 +109,8 @@ opac_scheme: \
 'ck' - Use the corr-k scheme here (only option)
 
 adj_scheme: \
-'Ray_dry' - Ray Pierrehumbert's dry convective adjustment scheme
+'Ray_dry' - Ray Pierrehumbert's dry convective adjustment scheme \
+'MLT' - Mixing length theory
 
 CE_scheme: \
 'interp' - interpolation from CE table \
@@ -200,3 +209,4 @@ For longwave scattering problems we recommend the linear absorption approximatio
 Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions. \
 Improve interpolation of opacity tables to reduce spikiness. \
 Add general cloud opacity features. \ 
+Add more results and useful plottable information.
