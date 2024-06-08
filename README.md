@@ -1,11 +1,12 @@
 # Exo-FMS_column_ck
 
-[HEAVY RECONSTRUCTION IN PROGRESS]
+[HEAVY RECONSTRUCTION IN PROGRESS - TODO add references and descriptions and add comments]
 
 Elspeth KH Lee - Feb 2022
 
 Major Update History:
  - Jun 2022 - overhaul of opacities + Bezier methods
+ - Jun 2024 - major overhaul of code and new methods added
 
 This is the third part of a series of codes that builds upon different two-stream approaches and schemes, primarily useful for the GCM modelling community.
 This is the correlated-k (corr-k) version, currently set up for 11, 30 or 32 bands as discussed in Kataria et al. (2013), Showman et al. (2009) and Amundsen et al. (2014) respectively for modelling hot Jupiter atmospheres.
@@ -26,22 +27,35 @@ However, inside a GCM these spikes are typically smoothed out by the dynamical p
 To compile enter 'make' in the main directory. To remove compiled code enter 'make clean'.
 Some compiler options for gfortran, nvfortran and ifort are provided in the makefile.
 
-This code performs various two-stream approaches from the literature in a non-grey, picket fence context:
-1. Toon et al. method (w. scattering version)
-2. Short Characteristics method (w. linear or Bezier interpolants)
-3. Two-stream DISORT version (w. modifications by Xianyu Tan)
+This code performs various atmospheric radiative-transfer approaches from the literature using corr-k, split into short and long wave methods.
+
+For the shortwave method we have:
+1. Direct beam only method
+2. Adding method
+3. Spherical harmonic adding method (SDA)
+4. Toon89 multiple scattering method
+5. Spherical harmonic two-stream multiple scattering method (SH2)
+6. Spherical harmonic four-stream multiple scattering method (SH4)
+7. Two-stream DISORT version
+
+For the longwave method we have:
+1. Absorption approximation with exponential in tau function (AA_E)
+2. Absorption approximation with linear in tau function (AA_L)
+3. Short characteristics (sc) with linear interpolants 
+4. Toon89 multiple scattering method
+5. Variational iteration method (VIM)
 
 This emulates a single column inside the Exo-FMS GCM and is useful for testing and developing new techniques
 as they would perform inside a GCM setting. This is also useful to see differences in each method and their various approximations.
 
-For the shortwave fluxes, for methods that do not contain a shortwave scattering mode we include the 'adding method' (Mendonca et al. 2015 + references). We detect if any albedo is present in the column, and perform the adding method to calculate the scattered flux, otherwise if there is no albedo only the direct beam is used.
-
-To integrate the Planck function we utilise the method described here (Widger, W. K. and Woodall, M. P. 1976): \
+For longwave radiation integrate the Planck function we utilize the method described here (Widger, W. K. and Woodall, M. P. 1976): \
 https://spectralcalc.com/blackbody/inband_radiance.html \
 We found this to be very quick and stable method, producing similar results to the Disort version but with quicker convergence in most cases, especially with the way it is coded here by using the results of the previous band to get the next bin value. \
 An alternative would be to produce a table of integrated fluxes for a temperature range and for each wavelength band and interpolate to that, as is done in other GCM models e.g. SPARC/MITgcm.
 
-We also include a dry convective adjustment schemes, currently only 'Ray_adj', based on Raymond Pierrehumbert's python code.
+For the longwave radiation, we use the weighted essentially non oscillatory order 4 interpolation method (WENO4) from Janett et al. (2019). This allows for highly smooth interpolation of the temperature from the layers to the levels (typically this is required in GCMs) and strong gradients in temperature are accurately interpolated through. Linear extrapolation is used for the end points to avoid numerical issues and overshoot.
+
+We also include dry convective adjustment schemes, currently 'Ray_adj', based on Raymond Pierrehumbert's python code and mixing length theory (MLT).
 
 # Requirements & Opacity data:
 
@@ -49,10 +63,10 @@ You need to download CIA tables from the HITRAN database, mainly H2-H2, H2-He, H
 Typically you add them to the 'cia' data folder.
 
 Our pre-mixed k-tables contained in this repository have over 30 species of interest (including UV-OPT species, Fe, Fe+, SiO, TiO and VO) to exoplanet atmospheres and cool dwarf stars. \
-The pre-mixed tables are valid between a temperature of 200-6100 K and pressure 1e-8 - 1000 bar, making them suitable for UHJ modelling too. \
+The pre-mixed tables are valid between a temperature of 100-6100 K and pressure 1e-8 - 1000 bar, making them suitable for UHJ modelling too. \
 Importantly we include the important species responsible for the upper atmosphere temperature inversion as found in Lothringer et al. (2020). \
 Alternative pre-mixed tables without UV-OPT absorbers labeled 'nUVOPT' in the ck data directory. \
-The pre-mixed tables were calculated assuming local rainout (i.e. species that have condensed are at their saturation point (S=1) VMRs)
+The pre-mixed tables were calculated assuming local condensation only (i.e. species that have condensed are at their saturation point (S=1) VMRs)
 
 More individual k-tables can be produced upon request and will be made available publicly at some point, right now we include some important species for 11 bins (in the directory "11_ck_data_g8" since it is much faster) for the random overlap resort rebin (RORR) and adaptive equivalent extinction (AEE) methods.
 
@@ -66,10 +80,9 @@ In the file 'FMS_RC.nml' you can select different options that control the simul
 
 ### &FMS_RC_nml
 
-ts_scheme: \
-'Toon_scatter' - Toon et al. ts method with scattering \
-'Shortchar_linear' -  Short characteristics method with linear interpolants \
-'Disort_scatter' - two-stream DISORT version with scattering
+sw_scheme: \
+
+lw_scheme: \
 
 opac_scheme: \
 'ck' - Use the corr-k scheme here (only option)
@@ -78,14 +91,10 @@ adj_scheme: \
 'Ray_dry' - Ray Pierrehumbert's dry convective adjustment scheme
 
 CE_scheme: \
-'Burrows' - use Burrows analytic CE abundances \
-'Interp_bilinear' - use bilinear interpolation from CE table \
-'Interp_Bezier' - use Bezier interpolation from CE table \
-'Min' - use CE minimisation scheme (in development)
+'interp' - interpolation from CE table \
 
 The option 'None' for each of these scheme will it off (e.g. To run without conv adjustment set adj_scheme = 'None')
 
-data_dir - path to data directory \
 nb - number of wavelength bands \
 wl_sh - file with wavelength edges \
 stellarf_sh - file with stellar surface fluxes
@@ -116,8 +125,6 @@ k_V - visible band opacity (m2 kg-1) \
 k_IR - IR band opacity (m2 kg-1) \
 fl - The Heng et al. (2011) parameter used for pressure dependent IR optical depths \
 met - metallicty in dex solar (M/H)
-
-Bezier - use Bezier interpolation for Temperature layer to level interpolation (.True.)
 
 zcorr - include zenith angle correction (.False.) \
 zcorr_meth - zenith angle correction method (1,2)  \
@@ -167,16 +174,14 @@ A python plotting routine, 'plot_TP.py' is provided to plot the results of the s
 # Gaussian Ordinance values
 
 In methods that use Gaussian quadrature to perform the mu integration in intensity (to calculate the flux), various values and weights can be changed for testing at the top of the two-stream modules.
-You will need to clean and recompile the code if these are changed.
+You will need to clean and recompile the code if these are changed. Beware, some codes use the classical Gauss-Legendre method (flux = 2pi * intensity), while others include the weighting in the intensity (flux = pi * intensity).
 
 # Personal recommendations
 
-For non-scattering problems, we generally recommend that the short characteristics method be used (either linear or Bezier interpolants), as it is fast, efficient, very stable and also very accurate. This is currently what is used inside Exo-FMS for the Hot Jupiter simulations.
-For shortwave scattering problems we recommend the adding method as included (or using the two-stream Toon or DISORT methods), the adding method is generally fast and accurate (enough), especially for grey opacity problems.
-For longwave scattering problems we recommend the two stream Toon scattering version.
-If that fails try the DISORT code, it is very reliable but generally slower compared to other scattering methods.
+For shortwave scattering problems we recommend the adding method as included, or if more accuracy is needed the SDA or Toon89 methods.
+For longwave scattering problems we recommend the linear absorption approximation method or if more accuracy is required the VIM or Toon89 methods.
+
 
 # Future developments
 
-We will include versions that include multiple-scattering in the longwave in the future. \
 Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions.

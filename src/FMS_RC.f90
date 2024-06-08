@@ -193,7 +193,6 @@ program Exo_FMS_RC
   !! Set a_surf to zero for now
   a_surf(:) = 0.0_dp
 
-
   !! Make thermo variables constabt for now
   cp_bar(:) = cp_air
   Rd_bar(:) = Rd_air
@@ -316,7 +315,7 @@ program Exo_FMS_RC
       ! Approximate adding method with approximate scattering
       call sw_adding(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
     case('sw_SDA')
-      ! Spherical harmonic doubling (SDA) adding four stream  method with approximate scattering
+      ! Spherical harmonic doubling (SDA) adding four stream method with approximate scattering
       call sw_SDA(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
     case('sw_Toon')
       ! Toon89 shortwave method with multiple scattering
@@ -371,9 +370,10 @@ program Exo_FMS_RC
 
     !! Convective adjustment scheme
     select case(adj_scheme)
-    case('ray_dry')
+    case('Ray_dry')
       ! Dry convective adjustment following Ray Pierrehumbert's python script
       call Ray_dry_adj(nlay, nlev, t_step, kappa_air, Tl, pl, pe, dT_conv)
+      Kzz(:) = 1e1_dp
     case('MLT')
       ! Use mixing length theory (MLT) to time dependently adjust the adiabat and estimate Kzz
       call MLT(nlay, nlev, t_step, Tl, pl, pe, Rd_bar, cp_bar, kappa_bar, &
@@ -423,21 +423,21 @@ program Exo_FMS_RC
   print*, 'ASR [W m-2], Tinc:'
   print*, asr, (asr/sb)**(0.25_dp)
 
+  print*, 'Internal T [W m-2], Tint'
+  print*, sb * Tint**4, Tint
+
   print*, 'Outputting results: '
   open(newunit=uu,file='FMS_RC_pp.out', action='readwrite')
   do i = 1, nlay
-    write(uu,*) i, pl(i), Tl(i), dT_rad(i), dT_conv(i)!, 0.5_dp*(tau_e(:,:,i+1)+tau_e(:,:,i)), &
-    !  & k_l(:,:,i)
-    !print*,  i, pl(i), Tl(i), dT_rad(i), dT_conv(i) !, 0.5_dp*(tau_e(:,:,i+1)+tau_e(:,:,i)), &
-      !& k_l(:,:,i)
+    write(uu,*) i, pl(i), Tl(i), dT_rad(i), dT_conv(i), Kzz(i)
   end do
-  !close(uu)
+  close(uu)
 
-  !open(newunit=u,file='FMS_RC_pp_g.out', action='readwrite')
-  !do i = 1, nlay
-  !  write(u,*) i,0.5_dp*(tau_e(:,:,i+1)+tau_e(:,:,i)), k_l(:,:,i)
-  !end do
-  !close(u)
+  open(newunit=uu,file='FMS_RC_flx.out', action='readwrite')
+  do i = 1, nlev
+    write(uu,*) i, pe(i), sw_up(i), sw_down(i), sw_net(i), lw_up(i), lw_down(i), lw_net(i)
+  end do
+  close(uu)
 
   print*, n, 'steps took: '
   print '("Time = ",f8.3," seconds.")', finish-start
