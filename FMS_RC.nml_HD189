@@ -1,16 +1,16 @@
 &FMS_RC_nml
 
-ts_scheme = 'Shortchar_Bezier'
+ts_scheme = 'Toon_scatter'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
-CE_scheme = 'Interp_Bezier'
+CE_scheme = 'Interp'
 
 data_dir = 'data/'
-nb = 34
-wl_sh = 'wavelengths_GCM_34.txt'
-stellarf_sh = 'sw_flux/sw_band_flux_HD189_34.txt'
+nb = 32
+wl_sh = 'wavelengths_GCM_32.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_HD189_32.txt'
 
-Rs = 0.805
+Rs = 0.805 
 sm_ax = 0.031
 
 n_ck = 1
@@ -20,26 +20,26 @@ n_cia = 7
 n_ray = 4
 
 nlay = 54
-a_sh = 'Hybrid_sigma_grid_a_54.txt'
-b_sh = 'Hybrid_sigma_grid_b_54.txt'
+a_sh = 'hybrid_sigma/Hybrid_sigma_grid_a_54.txt'
+b_sh = 'hybrid_sigma/Hybrid_sigma_grid_b_54.txt'
 
 pref = 1.0e8
 
-t_step = 20.0
+t_step = 60.0
 nstep = 100000
-Rd_air = 3556.8
-cp_air = 1.3e4
+Rd_air = 3573.0
+cp_air = 12698.0
 grav = 21.78
-mu_z = 0.5
-Tirr = 1694.0
-Tint = 382.0
+mu_z = 0.577
+Tirr = 1200.0
+Tint = 381.0
 
 k_V = 6e-4
 k_IR = 1e-3
 fl = 1.0
 met = 0.0
 
-Bezier = .True.
+Bezier = .False.
 
 zcorr = .False.
 zcorr_meth = 1
@@ -54,14 +54,13 @@ table_num = 1
 &sp_nml
 
 sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
-VMR_tab_sh = 'data/UHJ_interp_co_1x_GCM.txt'
+VMR_tab_sh = 'data/ce/FastChem_ck_1x_int.txt'
 
 /
 
 &gw_nml
 
-gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635,
-0.01630362887156367, 0.01630362887156367, 0.00869637112843635
+gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635, 0.01630362887156367, 0.01630362887156367, 0.00869637112843635
 
 /
 
@@ -73,7 +72,7 @@ AEE = .False.
 ck_interp = 2
 ck_form = 2
 ck_sp = 'PM'
-ck_paths = 'data/ck/PM_ck_HELIOSK_cond_34.txt'
+ck_paths = 'data/ck/Premixed_1x_g8_32.txt'
 
 /
 
@@ -90,6 +89,6 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H
 
 ray_form = 1, 1, 1, 1
 ray_sp = 'H2', 'He', 'H', 'e-'
-ray_paths = 'data/ray/Ray_H2_34.txt', 'data/ray/Ray_He_34.txt', 'data/ray/Ray_H_34.txt', 'data/ray/Ray_e-_34.txt'
+ray_paths = 'data/ray/Ray_H2_32.txt', 'data/ray/Ray_He_32.txt', 'data/ray/Ray_H_32.txt', 'data/ray/Ray_e-_32.txt'
 
 /
