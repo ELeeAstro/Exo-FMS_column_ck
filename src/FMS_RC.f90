@@ -20,12 +20,19 @@ program Exo_FMS_RC
   use sw_SH2_mod, only : sw_SH2
   use sw_SH4_mod, only : sw_SH4
 
+  use lw_AA_E_mod, only : lw_AA_E
+  use lw_AA_L_mod, only : lw_AA_L
   use lw_sc_linear_mod, only : lw_sc_linear
+  use lw_VIM_mod, only : lw_VIM
+  use lw_Toon_mod, only : lw_Toon
 
   use ce_interp, only : interp_ce_table
   use ck_opacity_mod, only : ck_opacity
   use IC_mod, only : IC_profile
+
   use dry_conv_adj_mod, only : Ray_dry_adj
+  use MLT_mod, only : MLT
+
   use ieee_arithmetic
   implicit none
 
@@ -62,8 +69,10 @@ program Exo_FMS_RC
   real(dp), allocatable, dimension(:) :: mu
   character(len=10), allocatable, dimension(:) :: sp_list
 
-  real(dp) :: cp_air, grav, k_IR, k_V, kappa_air, Rd_air
+  real(dp) :: grav, k_IR, k_V, cp_air, Rd_air, kappa_air
   real(dp) :: Rs, sm_ax
+
+  real(dp), allocatable, dimension(:) :: cp_bar, kappa_bar, Rd_bar
 
   logical :: zcorr
   integer :: zcorr_meth
@@ -73,6 +82,8 @@ program Exo_FMS_RC
   real(dp), allocatable, dimension(:) :: a_surf
   real(dp), allocatable, dimension(:) :: sw_up, sw_down, sw_net 
   real(dp), allocatable, dimension(:) :: lw_up, lw_down, lw_net 
+
+  real(dp), allocatable, dimension(:) :: Kzz 
 
   integer :: iIC
   logical :: corr
@@ -88,12 +99,10 @@ program Exo_FMS_RC
 
   integer :: u_nml
 
-  logical :: Bezier
-
   namelist /FMS_RC_nml/ sw_scheme, lw_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
           & t_step, nstep, Rd_air, cp_air, grav, mu_z, Tirr, Tint, k_V, k_IR, fl, met, &
           & iIC, corr, table_num, nb, ng, nsp, wl_sh,  stellarf_sh, n_ck, &
-          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius, Bezier
+          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius
 
   namelist /sp_nml/ sp_list, VMR_tab_sh
 
@@ -178,13 +187,20 @@ program Exo_FMS_RC
   allocate(sw_up(nlev), sw_down(nlev), sw_net(nlev))
   allocate(lw_up(nlev), lw_down(nlev), lw_net(nlev))
   allocate(a_surf(nb))
+  allocate(Kzz(nlay))
+  allocate(cp_bar(nlay), kappa_bar(nlay), Rd_bar(nlay))
 
   !! Set a_surf to zero for now
   a_surf(:) = 0.0_dp
 
 
+  !! Make thermo variables constabt for now
+  cp_bar(:) = cp_air
+  Rd_bar(:) = Rd_air
+
   !! Calculate the adiabatic coefficent
   kappa_air = Rd_air/cp_air   ! kappa = Rd/cp
+  kappa_bar(:) = Rd_bar(:)/cp_bar(:)
 
   print*, 'Tint ', 'Tirr ', 'pref ', 'pu ', 'mu_z ', 'grav '
   print*, Tint, Tirr, pref/1e5_dp, pu/1e5_dp, mu_z, grav
@@ -229,7 +245,7 @@ program Exo_FMS_RC
     select case(CE_scheme)
     case('interp')
       do k = 1, nlay
-        call interp_ce_table(nsp, Tl(k), pl(k), VMR(:,k), mu(k),  VMR_tab_sh)
+        call interp_ce_table(nsp, Tl(k), pl(k), VMR(:,k), mu(k), VMR_tab_sh)
         !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
       end do
     case('none')
@@ -246,7 +262,7 @@ program Exo_FMS_RC
 
        ! Calculate the opacity structure of the column
        call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), &
-       & nsp, sp_list(:), VMR(:,:), k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
+         & nsp, sp_list(:), VMR(:,:), k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
 
       ! Include optical depth component from 0 pressure, assuming constant T and p at boundary
       tau_e(:,:,1) = (k_l(:,:,1) * pe(1)) / grav
@@ -272,16 +288,16 @@ program Exo_FMS_RC
       select case(zcorr_meth)
       case(1)
         ! Basic geometric correction following Li & Shibata (2006) Eq. (2)
-        mu_z_eff(:) = sqrt(1.0 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2))
+        mu_z_eff(:) = sqrt(1.0_dp - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2))
       case(2)
         ! Spherical layer correction following Li & Shibata (2006) Eq.(10)
         alp(nlev) = (alt(nlay) -  alt(nlev))/radius
         do k = nlay,1,-1
            alp(k) = (alt(k) -  alt(k+1))/(radius + alt(k))
         end do
-        mu_z_eff(:) = (sqrt(1.0 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2)) + &
-        & sqrt((1.0 + alp(:))**2 - (radius/(radius + alt(:)))**2 * (1.0 - mu_z**2))) / &
-        & (2.0 + alp(:))
+        mu_z_eff(:) = (sqrt(1.0_dp - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2)) + &
+          & sqrt((1.0_dp + alp(:))**2 - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2))) / &
+          & (2.0_dp + alp(:))
       case default
         print*, 'Invalid zcorr_meth ', zcorr_meth
         stop
@@ -303,7 +319,7 @@ program Exo_FMS_RC
       ! Spherical harmonic doubling (SDA) adding four stream  method with approximate scattering
       call sw_SDA(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
     case('sw_Toon')
-      ! Toon89 method with multiple scattering
+      ! Toon89 shortwave method with multiple scattering
       call sw_Toon(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
     case('sw_SH2')
       ! Spherical harmonic two stream method with multiple scattering
@@ -322,15 +338,21 @@ program Exo_FMS_RC
 
     !! Longwave radiative transfer step
     select case(lw_scheme)
+    case('lw_AA_E')
+      ! Absorption approximation exponential in tau (AA_E) with approximate scattering
+      call lw_AA_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr) 
+    case('lw_AA_L')
+      ! Absorption approximation linear in tau (AA_L) with approximate scattering
+      call lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)     
     case('lw_sc_linear')
-      ! Short characteristics with linear interpolants with no scattering
+      ! Short characteristics (sc) with linear interpolants with no scattering
       call lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
-    case('lw_vim')
+    case('lw_VIM')
       ! Variational Iteration Method (VIM) with approximate scattering
-      !call lw_VIM()
-    case('lw_toon')
-      ! Toon89 method with scattering with multiple scattering
-      !call lw_Toon()
+      call lw_VIM(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_Toon')
+      ! Toon89 longwave method with multiple scattering
+      call lw_Toon(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_disort_ts')
       ! Two stream disort method with multiple scattering
       !call lw_disort_ts()
@@ -352,8 +374,10 @@ program Exo_FMS_RC
     case('ray_dry')
       ! Dry convective adjustment following Ray Pierrehumbert's python script
       call Ray_dry_adj(nlay, nlev, t_step, kappa_air, Tl, pl, pe, dT_conv)
-    case('mlt')
-
+    case('MLT')
+      ! Use mixing length theory (MLT) to time dependently adjust the adiabat and estimate Kzz
+      call MLT(nlay, nlev, t_step, Tl, pl, pe, Rd_bar, cp_bar, kappa_bar, &
+         & grav, dT_conv, Kzz)      
     case('none')
     case default
       print*, 'Invalid adj_scheme: ', trim(adj_scheme)

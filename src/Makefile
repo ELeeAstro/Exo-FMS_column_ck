@@ -39,13 +39,18 @@ OBJECTS = \
     ce_interp.o \
 	  ck_opacity_mod.o \
 	  dry_conv_adj_mod.o \
+		MLT_mod.o \
 		sw_direct_mod.o \
 		sw_adding_mod.o \
 		sw_SDA_mod.o \
 		sw_Toon_mod.o \
 		sw_SH2_mod.o \
 		sw_SH4_mod.o \
+		lw_AA_E_mod.o \
+		lw_AA_L_mod.o \
 		lw_sc_linear_mod.o \
+		lw_VIM_mod.o \
+		lw_Toon_mod.o \
     FMS_RC.o
 
 # executable statement

@@ -152,10 +152,10 @@ contains
 
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
     !! Assume HG phase function for scaling
-    fc(:) = g_in(:)**(nstr)
-    pmom2(:) = g_in(:)**(nstr+1)
 
-    where (fc(:) /=  pmom2(:))
+    where (g_in(:) >= 1e-6_dp)
+      fc(:) = g_in(:)**(nstr)
+      pmom2(:) = g_in(:)**(nstr+1)
       sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
       & ( log(fc(:)**2/pmom2(:)**2) )
       c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))

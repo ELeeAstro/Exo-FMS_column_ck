@@ -1,9 +1,9 @@
 &FMS_RC_nml
 
-sw_scheme = 'sw_SH4'
-lw_scheme = 'lw_sc_linear'
+sw_scheme = 'sw_SDA'
+lw_scheme = 'lw_AA_E'
 opac_scheme = 'ck'
-adj_scheme = 'ray_dry'
+adj_scheme = 'MLT'
 CE_scheme = 'interp'
 
 nb = 32
@@ -38,8 +38,6 @@ k_V = 6e-4
 k_IR = 1e-3
 fl = 1.0
 met = 0.0
-
-Bezier = .False.
 
 zcorr = .False.
 zcorr_meth = 1

@@ -140,7 +140,8 @@ contains
       return
 
     end if
-        !! Calculate dtau in each layer
+
+    !! Calculate dtau in each layer
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
 
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)

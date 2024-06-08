@@ -1,4 +1,4 @@
-module lw_sc_linear_mod
+module lw_AA_L_mod
   use, intrinsic :: iso_fortran_env
   use WENO4_mod, only : interpolate_weno4  
   implicit none
@@ -25,19 +25,20 @@ module lw_sc_linear_mod
   ! integer, parameter :: nmu = 1
   ! real(dp), dimension(nmu), parameter :: uarr = (/0.6096748751_dp/)
   ! real(dp), dimension(nmu), parameter :: w = (/1.0_dp/)
+  ! real(dp), dimension(nmu), parameter :: wuarr = uarr * w
 
   !! Gauss–Jacobi-5 quadrature for 2 nodes (Hogan 2024)
   integer, parameter :: nmu = 2
   real(dp), dimension(nmu), parameter :: uarr = (/0.2509907356_dp, 0.7908473988_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.2300253764_dp, 0.7699746236_dp/)
 
-  private :: lw_shortchar_linear, BB_integrate
-  public :: lw_sc_linear
+  private :: lw_AA_linear, BB_integrate
+  public :: lw_AA_L
 
 contains
 
 
-  subroutine lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
+  subroutine lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
     implicit none
 
     !! Input variables
@@ -47,6 +48,8 @@ contains
     real(dp), dimension(nlay), intent(in) :: Tl, pl
     real(dp), dimension(nlev), intent(in) :: pe
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
+    real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
+    real(dp), dimension(nb), intent(in) :: a_surf
     real(dp), intent(in) :: Tint
 
     !! Output variables
@@ -81,7 +84,8 @@ contains
       lw_up_b(b,:) = 0.0_dp
       lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_shortchar_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), lw_up_g(g,:), lw_down_g(g,:))
+        call lw_AA_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), &
+          & lw_up_g(g,:), lw_down_g(g,:))
         lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
         lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
       end do
@@ -95,28 +99,65 @@ contains
     !! Outgoing Longwave Radiation (olr)
     olr = lw_up(1)
 
-  end subroutine lw_sc_linear
+  end subroutine lw_AA_L
 
-  subroutine lw_shortchar_linear(nlay, nlev, be, be_int, tau_in, flx_up, flx_down)
+  subroutine lw_AA_linear(nlay, nlev, be, be_int, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
     real(dp), dimension(nlev), intent(in) :: be, tau_in
-    real(dp), intent(in) :: be_int
+    real(dp), dimension(nlay), intent(in) :: w_in, g_in
+    real(dp), intent(in) :: be_int, a_surf_in
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
-    !! Work variables and arrays
+    !! Work variables
     integer :: k, m
-    real(dp), dimension(nlay) :: dtau, edel
-    real(dp), dimension(nlay) :: del, e0i, e1i, e1i_del
-    real(dp), dimension(nlay) :: Am, Bm, Gp, Bp
+    real(dp), dimension(nlay) :: dtau, w0, hg, eps, dtau_a
+    real(dp), dimension(nlay) :: b1, b0, T
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlay) :: fc, sigma_sq, pmom2, c
+    integer, parameter :: nstr = nmu*2
 
-    !! Calculate dtau in each layer
-    dtau(:) = tau_in(2:) - tau_in(1:nlay)
+    dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
+
+    !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
+    !! Assume HG phase function for scaling
+    
+    where (g_in(:) >= 1e-6_dp)
+      fc(:) = g_in(:)**(nstr)
+      pmom2(:) = g_in(:)**(nstr+1)
+      sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
+      & ( log(fc(:)**2/pmom2(:)**2) )
+      c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
+      fc(:) = c(:)*fc(:)
+
+      w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
+      dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
+
+    elsewhere
+      w0(:) = w_in(:)
+    end where
+
+    hg(:) = g_in(:)
+
+    !! Linear B with tau function
+    where (dtau(:) <= 1.0e-6_dp)
+      b1(:) = 0.0_dp
+      b0(:) = 0.5_dp*(be(2:nlev) + be(1:nlay))
+    elsewhere
+      b1(:) = (be(2:nlev) - be(1:nlay))/dtau(:) 
+      b0(:) = be(1:nlay)
+    end where
+
+    !! modified co-albedo epsilon
+    eps(:) = sqrt((1.0_dp - w0(:))*(1.0_dp - hg(:)*w0(:)))
+    !eps(:) = (1.0_dp - w0(:))
+
+    !! Absorption/modified optical depth for transmission function
+    dtau_a(:) = eps(:)*dtau(:)
 
     ! Zero the total flux arrays
     flx_up(:) = 0.0_dp
@@ -125,43 +166,22 @@ contains
     !! Start loops to integrate in mu space
     do m = 1, nmu
 
-      del(:) = dtau(:)/uarr(m)
-      edel(:) = exp(-del(:))
-      e0i(:) = 1.0_dp - edel(:)
-
-      !! Prepare loop
-      ! Olson & Kunasz (1987) linear interpolant parameters
-      where (edel(:) > 0.999_dp)
-        ! If we are in very low optical depth regime, then use an isothermal approximation
-        Am(:) = (0.5_dp*(be(2:) + be(1:nlay)) * e0i(:))/be(1:nlay)
-        Bm(:) = 0.0_dp
-        Gp(:) = 0.0_dp
-        Bp(:) = Am(:)
-      elsewhere
-        ! Use linear interpolants
-        e1i(:) = del(:) - e0i(:)
-        e1i_del(:) = e1i(:)/del(:) ! The equivalent to the linear in tau term
-
-        Am(:) = e0i(:) - e1i_del(:) ! Am(k) = Gp(k), just indexed differently
-        Bm(:) = e1i_del(:) ! Bm(k) = Bp(k), just indexed differently
-        Gp(:) = Am(:)
-        Bp(:) = Bm(:)
-      end where
+      !! Transmission function
+      T(:) = exp(-dtau_a(:)/uarr(m))
 
       !! Begin two-stream loops
       !! Perform downward loop first
-      ! Top boundary condition - 0 flux downward from top boundary
+      ! Top boundary condition - intensity downward from top boundary (tautop, assumed isothermal)
       lw_down_g(1) = 0.0_dp
       do k = 1, nlay
-        lw_down_g(k+1) = lw_down_g(k)*edel(k) + Am(k)*be(k) + Bm(k)*be(k+1) ! TS intensity
+        lw_down_g(k+1) = lw_down_g(k)*T(k) + b0(k)*(1.0_dp - T(k)) + b1(k)*(uarr(m)*T(k)+dtau_a(k)-uarr(m)) ! TS intensity
       end do
 
       !! Perform upward loop
-      ! Lower boundary condition - internal heat definition Fint = F_down - F_up
-      ! here we use the same condition but use intensity units to be consistent
+      ! Lower boundary condition - internal heat definition Fint = F_up - F_down
       lw_up_g(nlev) = lw_down_g(nlev) + be_int
       do k = nlay, 1, -1
-        lw_up_g(k) = lw_up_g(k+1)*edel(k) + Bp(k)*be(k) + Gp(k)*be(k+1) ! TS intensity
+        lw_up_g(k) = lw_up_g(k+1)*T(k) + b0(k)*(1.0_dp - T(k)) + b1(k)*(uarr(m)-(dtau_a(k)+uarr(m))*T(k)) ! TS intensity
       end do
 
       !! Sum up flux arrays with Gaussian quadrature weights and points for this mu stream
@@ -170,11 +190,11 @@ contains
 
     end do
 
-    !! The flux is the intensity * pi
+    !! The flux is the integrated intensity * pi (in this GJ weighting scheme)
     flx_down(:) = pi * flx_down(:)
     flx_up(:) = pi * flx_up(:)
 
-  end subroutine lw_shortchar_linear
+  end subroutine lw_AA_linear
 
   subroutine BB_integrate(n_b, Te, wn_e, be)
     implicit none
@@ -226,4 +246,4 @@ contains
 
   end subroutine BB_integrate
 
-end module lw_sc_linear_mod
+end module lw_AA_L_mod
