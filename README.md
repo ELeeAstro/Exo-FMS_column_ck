@@ -81,8 +81,21 @@ In the file 'FMS_RC.nml' you can select different options that control the simul
 ### &FMS_RC_nml
 
 sw_scheme: \
+'sw_direct' - direct beam only \ 
+'sw_adding' - adding method \
+'sw_SDA' - SDA method \
+'sw_Toon' - Toon89 method \
+'sw_SH2' - SH2 method \
+'sw_SH4' - SH4 method \ 
+'sw_disort_ts' - two stream disort method
 
 lw_scheme: \
+'lw_AA_E' - AA_E method \
+'lw_AA_L' - AA_L method \
+'lw_sc_linear' - sc linear method \
+'lw_VIM' - VIM method \
+'lw_Toon' - Toon89 method \ 
+'lw_disort_ts' - two steam disort method
 
 opac_scheme: \
 'ck' - Use the corr-k scheme here (only option)
@@ -184,4 +197,6 @@ For longwave scattering problems we recommend the linear absorption approximatio
 
 # Future developments
 
-Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions.
+Ability to include solid surface temperatures and temperature evolution, this involves some extra switches and boundary conditions. \
+Improve interpolation of opacity tables to reduce spikiness. \
+Add general cloud opacity features. \ 
