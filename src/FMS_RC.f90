@@ -13,9 +13,15 @@
 program Exo_FMS_RC
   use, intrinsic :: iso_fortran_env
 
-  use ts_Toon_scatter_mod, only : ts_Toon_scatter
-  use ts_short_char_mod_linear, only : ts_short_char_linear
-  use ts_disort_scatter_mod, only : ts_disort_scatter
+  use sw_direct_mod, only : sw_direct
+  use sw_adding_mod, only : sw_adding
+  use sw_SDA_mod, only : sw_SDA
+  use sw_Toon_mod, only : sw_Toon
+  use sw_SH2_mod, only : sw_SH2
+  use sw_SH4_mod, only : sw_SH4
+
+  use lw_sc_linear_mod, only : lw_sc_linear
+
   use ce_interp, only : interp_ce_table
   use ck_opacity_mod, only : ck_opacity
   use IC_mod, only : IC_profile
@@ -33,17 +39,17 @@ program Exo_FMS_RC
   real(dp), parameter :: au = 1.495978707e11_dp
 
   integer :: n_ck, n_cia, n_ray
-  character(len=50) :: data_dir, stellarf_sh, wl_sh
+  character(len=200) ::  stellarf_sh, wl_sh
 
   integer :: n, i, k, u, j, b, inan
   integer :: nb, ng, nwl
   integer :: nstep, nlay, nlev
   integer :: table_num
   real(dp) :: t_step, t_tot
-  real(dp) :: mu_z, Tirr, Tint, Fint, pref, pu, met, fl, F0
+  real(dp) :: mu_z, Tirr, Tint, pref, pu, met, fl
   real(dp), allocatable, dimension(:) :: Tl, pl, pe, dpe, Finc
   real(dp), allocatable, dimension(:,:,:) :: k_l
-  real(dp), allocatable, dimension(:,:,:) :: tau_e, tau_l
+  real(dp), allocatable, dimension(:,:,:) :: tau_e
   real(dp), allocatable, dimension(:,:,:) :: ssa, gg
   real(dp), allocatable, dimension(:) :: dT_rad, dT_conv, net_F
   real(dp), allocatable, dimension(:) :: gw
@@ -64,25 +70,29 @@ program Exo_FMS_RC
   real(dp) :: radius
   real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp
 
+  real(dp), allocatable, dimension(:) :: a_surf
+  real(dp), allocatable, dimension(:) :: sw_up, sw_down, sw_net 
+  real(dp), allocatable, dimension(:) :: lw_up, lw_down, lw_net 
+
   integer :: iIC
   logical :: corr
   real(dp) :: prc
 
   integer :: ua, ub, uu
-  character(len=50) :: a_sh, b_sh
+  character(len=200) :: a_sh, b_sh
   real(dp), allocatable, dimension(:) :: a_hs, b_hs
 
   real(dp) :: start, finish
 
-  character(len=50) :: ts_scheme, opac_scheme, adj_scheme, CE_scheme
+  character(len=200) :: sw_scheme, lw_scheme, opac_scheme, adj_scheme, CE_scheme
 
   integer :: u_nml
 
   logical :: Bezier
 
-  namelist /FMS_RC_nml/ ts_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
+  namelist /FMS_RC_nml/ sw_scheme, lw_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
           & t_step, nstep, Rd_air, cp_air, grav, mu_z, Tirr, Tint, k_V, k_IR, fl, met, &
-          & iIC, corr, table_num, nb, ng, nsp, wl_sh, data_dir, stellarf_sh, n_ck, &
+          & iIC, corr, table_num, nb, ng, nsp, wl_sh,  stellarf_sh, n_ck, &
           & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius, Bezier
 
   namelist /sp_nml/ sp_list, VMR_tab_sh
@@ -108,7 +118,7 @@ program Exo_FMS_RC
   if (Tirr <= 0.0_dp) then
     Finc(:) = 0.0_dp
   else
-    open(newunit=u,file=trim(data_dir)//'/'//trim(stellarf_sh),status='old',action='read')
+    open(newunit=u,file=trim(stellarf_sh),status='old',action='read')
     do b = 1, nb
       read(u,*) Finc(b)       ! Read the stellar flux in each band
       !print*, b, Finc(b)
@@ -118,7 +128,7 @@ program Exo_FMS_RC
     Finc(:) = ((Rs * Rsun)/(sm_ax * au))**2 * Finc(:)
   end if
 
-  open(newunit=u,file=trim(data_dir)//'/'//trim(wl_sh),status='old',action='read')
+  open(newunit=u,file=trim(wl_sh),status='old',action='read')
   read(u,*) nwl
   allocate(wl_e(nwl), wn_e(nwl))
   if (nwl <= nb) then
@@ -135,8 +145,8 @@ program Exo_FMS_RC
   nlev = nlay + 1
 
   !! Read in hybrid sigma grid values
-  open(newunit=ua,file=trim(data_dir)//'/'//trim(a_sh), action='read', status='old')
-  open(newunit=ub,file=trim(data_dir)//'/'//trim(b_sh), action='read', status='old')
+  open(newunit=ua,file=trim(a_sh), action='read', status='old')
+  open(newunit=ub,file=trim(b_sh), action='read', status='old')
   allocate(a_hs(nlev),b_hs(nlev))
   do k = 1, nlev
     read(ua,*) a_hs(k)
@@ -165,6 +175,12 @@ program Exo_FMS_RC
   allocate(ssa(ng,nb,nlay), gg(ng,nb,nlay))
   allocate(VMR(nsp,nlay), mu(nlay))
   allocate(alt(nlev), mu_z_eff(nlev), alp(nlev))
+  allocate(sw_up(nlev), sw_down(nlev), sw_net(nlev))
+  allocate(lw_up(nlev), lw_down(nlev), lw_net(nlev))
+  allocate(a_surf(nb))
+
+  !! Set a_surf to zero for now
+  a_surf(:) = 0.0_dp
 
 
   !! Calculate the adiabatic coefficent
@@ -211,12 +227,12 @@ program Exo_FMS_RC
     dT_conv(:) = 0.0_dp
 
     select case(CE_scheme)
-    case('Interp')
+    case('interp')
       do k = 1, nlay
         call interp_ce_table(nsp, Tl(k), pl(k), VMR(:,k), mu(k),  VMR_tab_sh)
         !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
       end do
-    case('None')
+    case('none')
       do k = 1, nlay
         mu(k) = R_gas/Rd_air * 1000.0_dp
       end do
@@ -245,7 +261,7 @@ program Exo_FMS_RC
     end select
 
     !! Zenith angle geometric correction
-    if (zcorr .eqv. .True. .and. mu_z > 0.0_dp) then
+    if ((zcorr .eqv. .True.) .and. (mu_z > 0.0_dp)) then
       ! First calculate the altitude at each level from the hypsometric equation
       ! Assume constant gravity for simplicity
       alt(nlev) = 0.0_dp
@@ -275,36 +291,70 @@ program Exo_FMS_RC
       mu_z_eff(:) = mu_z
     end if
 
-    !! Two stream radiative transfer step
-    select case(ts_scheme)
-    case('Toon_scatter')
-      ! Toon method with scattering
-      call ts_Toon_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
-      & mu_z, Finc, Tint, net_F, olr, asr)
-    case('Shortchar_linear')
-      ! Short characteristics method without scattering
-      call ts_short_char_linear(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
-      & mu_z_eff, Finc, Tint, net_F, olr, asr)
-    case('Disort_scatter')
-      call ts_disort_scatter(Bezier, nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, &
-      & mu_z, Finc, Tint, net_F, olr, asr)
-    case('None')
+    !! Shortwave radiative transfer step
+    select case(sw_scheme)
+    case('sw_direct')
+      ! Direct beam only method with no scattering
+      call sw_direct(nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_adding')
+      ! Approximate adding method with approximate scattering
+      call sw_adding(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_SDA')
+      ! Spherical harmonic doubling (SDA) adding four stream  method with approximate scattering
+      call sw_SDA(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_Toon')
+      ! Toon89 method with multiple scattering
+      call sw_Toon(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_SH2')
+      ! Spherical harmonic two stream method with multiple scattering
+      call sw_SH2(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_SH4')
+      ! Spherical harmonic four stream method with multiple scattering
+      call sw_SH4(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+    case('sw_disort_ts')
+      ! Two stream disort method with multiple scattering
+      !call sw_disort_ts()
+    case('none')
     case default
-      print*, 'Invalid ts_scheme: ', trim(ts_scheme)
+      print*, 'Invalid sw_scheme: ', trim(sw_scheme)
       stop
     end select
 
+    !! Longwave radiative transfer step
+    select case(lw_scheme)
+    case('lw_sc_linear')
+      ! Short characteristics with linear interpolants with no scattering
+      call lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_vim')
+      ! Variational Iteration Method (VIM) with approximate scattering
+      !call lw_VIM()
+    case('lw_toon')
+      ! Toon89 method with scattering with multiple scattering
+      !call lw_Toon()
+    case('lw_disort_ts')
+      ! Two stream disort method with multiple scattering
+      !call lw_disort_ts()
+    case('none')
+    case default
+      print*, 'Invalid lw_scheme: ', trim(lw_scheme)
+      stop
+    end select
+
+
     !! Calculate the temperature tendency due to radiation
+    net_F(:) = lw_net(:) + sw_net(:) ! Net flux into/out of level
     do i = 1, nlay
       dT_rad(i) = (grav/cp_air) * (net_F(i+1)-net_F(i))/(dpe(i))
     end do
 
     !! Convective adjustment scheme
     select case(adj_scheme)
-    case('Ray_dry')
+    case('ray_dry')
       ! Dry convective adjustment following Ray Pierrehumbert's python script
       call Ray_dry_adj(nlay, nlev, t_step, kappa_air, Tl, pl, pe, dT_conv)
-    case('None')
+    case('mlt')
+
+    case('none')
     case default
       print*, 'Invalid adj_scheme: ', trim(adj_scheme)
       stop
@@ -343,11 +393,11 @@ program Exo_FMS_RC
   print*, 'For profile properties: '
   print*, Tint, Tirr, pref, mu_z
 
-  print*, 'OLR [W m-2]:'
-  print*, olr
+  print*, 'OLR [W m-2], Teff:'
+  print*, olr, (olr/sb)**(0.25_dp)
 
-  print*, 'ASR [W m-2]:'
-  print*, asr
+  print*, 'ASR [W m-2], Tinc:'
+  print*, asr, (asr/sb)**(0.25_dp)
 
   print*, 'Outputting results: '
   open(newunit=uu,file='FMS_RC_pp.out', action='readwrite')

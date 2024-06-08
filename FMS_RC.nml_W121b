@@ -1,17 +1,16 @@
 &FMS_RC_nml
 
-sw_scheme = 'sw_SH4'
-lw_scheme = 'lw_sc_linear'
+ts_scheme = 'Shortchar_linear'
 opac_scheme = 'ck'
-adj_scheme = 'ray_dry'
-CE_scheme = 'interp'
+adj_scheme = 'Ray_dry'
+CE_scheme = 'Interp'
 
-nb = 32
-wl_sh = 'opac_data/wavelengths_GCM_32.txt'
-stellarf_sh = 'sw_flux/sw_band_flux_HD189_32.txt'
+nb = 11
+wl_sh = 'opac_data/wavelengths_GCM_11.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_W121_11.txt'
 
-Rs = 0.805 
-sm_ax = 0.031
+Rs = 1.458
+sm_ax = 0.02544
 
 n_ck = 1
 ng = 8
@@ -27,12 +26,12 @@ pref = 1.0e8
 
 t_step = 60.0
 nstep = 10000
-Rd_air = 3573.0
-cp_air = 12698.0
-grav = 21.78
+Rd_air = 3641.0
+cp_air = 14336.0
+grav = 8.44
 mu_z = 0.577
-Tirr = 1200.0
-Tint = 381.0
+Tirr = 2358.0
+Tint = 583.0
 
 k_V = 6e-4
 k_IR = 1e-3
@@ -72,7 +71,7 @@ AEE = .False.
 ck_interp = 2
 ck_form = 2
 ck_sp = 'PM'
-ck_paths = 'opac_data/ck/Premixed_1x_g8_32.txt'
+ck_paths = 'opac_data/ck/Premixed_1x_g8_11.txt'
 
 /
 
@@ -89,6 +88,6 @@ cia_paths = 'opac_data/cia/H2-H2_2011.cia', 'opac_data/cia/H2-He_2011.cia', 'opa
 
 ray_form = 1, 1, 1, 1
 ray_sp = 'H2', 'He', 'H', 'e-'
-ray_paths = 'opac_data/ray/Ray_H2_32.txt', 'opac_data/ray/Ray_He_32.txt', 'opac_data/ray/Ray_H_32.txt', 'opac_data/ray/Ray_e-_32.txt'
+ray_paths = 'opac_data/ray/Ray_H2_11.txt', 'opac_data/ray/Ray_He_11.txt', 'opac_data/ray/Ray_H_11.txt', 'opac_data/ray/Ray_e-_11.txt'
 
 /

@@ -6,8 +6,8 @@
 F90          = gfortran
 F90LINKER    = gfortran
 DEFS      =
-#FFLAGS   	= -Og -pipe -g -fbacktrace -Wall -Wextra -pedantic -fcheck=all -Wconversion -fbounds-check
-FFLAGS   = -O3 -pipe
+#FFLAGS   	= -Og -pipe -g -fbacktrace -Wall -Wextra -pedantic -fcheck=all -Wconversion -fbounds-check -llapack
+FFLAGS   = -O3 -pipe -llapack
 INCLUDES  =
 LFLAGS    = $(FFLAGS)
 
@@ -36,12 +36,16 @@ OBJECTS = \
 	  call_twostr.o \
 	  k_Rosseland_mod.o \
 	  IC_mod.o \
-          ce_interp.o \
+    ce_interp.o \
 	  ck_opacity_mod.o \
 	  dry_conv_adj_mod.o \
-	  ts_short_char_mod_linear.o \
-	  ts_disort_scatter_mod.o \
-    ts_Toon_scatter_mod.o \
+		sw_direct_mod.o \
+		sw_adding_mod.o \
+		sw_SDA_mod.o \
+		sw_Toon_mod.o \
+		sw_SH2_mod.o \
+		sw_SH4_mod.o \
+		lw_sc_linear_mod.o \
     FMS_RC.o
 
 # executable statement

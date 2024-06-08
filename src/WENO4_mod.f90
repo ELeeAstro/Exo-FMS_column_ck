@@ -1,4 +1,4 @@
-module WENO4
+module WENO4_mod
   use, intrinsic :: iso_fortran_env
   implicit none
 
@@ -189,4 +189,4 @@ contains
 
   end subroutine weno4_q
 
-end module WENO4
+end module WENO4_mod
