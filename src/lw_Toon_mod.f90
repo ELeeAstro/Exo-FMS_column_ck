@@ -154,9 +154,7 @@ contains
     lm2 = l - 2
     lm1 = l - 1
 
-    do k = 1, nlay
-      dtau_in(k) = tau_in(k+1) - tau_in(k)
-    end do
+    dtau_in(:) = tau_in(2:nlev) - tau_in(1:nlay)
 
     ! Delta eddington scaling
     w0(:) = (1.0_dp - g_in(:)**2)*w_in(:)/(1.0_dp - w_in(:)*g_in(:)**2)

@@ -75,6 +75,10 @@ contains
     !! Net sw flux
     sw_net(:) = sw_up(:) - sw_down(:)
 
+    !print*, sw_net(:)
+
+    !stop
+
     !! Absorbed Stellar Radiation (ASR)
     asr = sw_down(1) - sw_up(1)
 
@@ -302,8 +306,8 @@ contains
     flux_bot = sum(F_bot(:)*X(:)) + G_bot
 
     do i = 1, nlev
-      flx_down(i) = max(flux_temp(i*2-1), 0.0_dp) + mu_z * F0_in * expon(i)
-      flx_up(i) = max(flux_temp(i*2), 0.0_dp)
+      flx_down(i) = flux_temp(i*2-1) + mu_z * F0_in * expon(i)
+      flx_up(i) = flux_temp(i*2)
     end do
 
   end subroutine sw_SH_two_stream
