@@ -44,6 +44,7 @@ For the longwave method we have:
 3. Short characteristics (sc) with linear interpolants 
 4. Toon89 multiple scattering method
 5. Variational iteration method (VIM)
+6. Two-stream DISORT version
 
 This emulates a single column inside the Exo-FMS GCM and is useful for testing and developing new techniques
 as they would perform inside a GCM setting. This is also useful to see differences in each method and their various approximations.
@@ -96,7 +97,7 @@ sw_scheme: \
 'sw_Toon' - Toon89 method \
 'sw_SH2' - SH2 method (experimental) \
 'sw_SH4' - SH4 method (experimental) \ 
-'sw_disort_ts' - two stream disort method
+'sw_disort_ts' - two stream disort method \
 
 lw_scheme: \
 'lw_AA_E' - AA_E method \
@@ -104,7 +105,7 @@ lw_scheme: \
 'lw_sc_linear' - sc linear method \
 'lw_VIM' - VIM method \
 'lw_Toon' - Toon89 method \ 
-'lw_disort_ts' - two steam disort method
+'lw_disort_ts' - two steam disort method \
 
 opac_scheme: \
 'ck' - Use the corr-k scheme here (only option)
