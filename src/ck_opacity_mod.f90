@@ -1,3 +1,8 @@
+!!!
+! Elspeth K.H. Lee (Jun 2024)
+! A large module for calculating corr-k, cia and rayleigh opacities
+!!!
+
 module ck_opacity_mod
   use, intrinsic :: iso_fortran_env
   implicit none

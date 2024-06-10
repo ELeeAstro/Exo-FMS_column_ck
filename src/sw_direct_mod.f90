@@ -1,3 +1,11 @@
+!!!
+! Elspeth KH Lee - Jun 2024 : Initial version
+!
+! sw: Direct beam component only
+!     Pros: Very very fast
+!     Cons: Zero scattering
+!!!
+
 module sw_direct_mod
   use, intrinsic :: iso_fortran_env
   implicit none

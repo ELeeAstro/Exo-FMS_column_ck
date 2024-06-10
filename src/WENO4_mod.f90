@@ -1,3 +1,12 @@
+!!!
+! Elspeth KH Lee - Jun 2024 : Initial version
+!
+! Weighted Essentially Non-Oscillatory interpolation of order 4 (WENO4) following the Julia lang implimentation
+! From Janet et al. (2019) 
+! Provides a very smooth inteprolation that can deal with discontinuity very well.
+!!!
+
+
 module WENO4_mod
   use, intrinsic :: iso_fortran_env
   implicit none

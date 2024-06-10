@@ -69,6 +69,7 @@ In the opac_data/ray directory you can use Gen_Ray_xsec.py to generate new Rayle
 
 You need to download CIA tables from the HITRAN database, mainly H2-H2, H2-He, H2-H and He-H for gas giants. \
 Typically you add them to the 'cia' data folder.
+You can also reformat the CIA into smaller files using the provided python code.
 
 Our pre-mixed k-tables contained in this repository have over 30 species of interest (including UV-OPT species, Fe, Fe+, SiO, TiO and VO) to exoplanet atmospheres and cool dwarf stars. \
 The pre-mixed tables are valid between a temperature of 100-6100 K and pressure 1e-8 - 1000 bar, making them suitable for UHJ modelling too. \
@@ -93,8 +94,8 @@ sw_scheme: \
 'sw_adding' - adding method \
 'sw_SDA' - SDA method \
 'sw_Toon' - Toon89 method \
-'sw_SH2' - SH2 method \
-'sw_SH4' - SH4 method \ 
+'sw_SH2' - SH2 method (experimental) \
+'sw_SH4' - SH4 method (experimental) \ 
 'sw_disort_ts' - two stream disort method
 
 lw_scheme: \
@@ -114,6 +115,7 @@ adj_scheme: \
 
 CE_scheme: \
 'interp' - interpolation from CE table \
+'Burrows' - use the Burrows & Sharp (1999) analytical CE scheme
 
 The option 'None' for each of these scheme will it off (e.g. To run without conv adjustment set adj_scheme = 'None')
 
@@ -179,7 +181,7 @@ ck_paths - path to the corr-k tables in order of species in ck_sp
 
 ### &cia_nml
 
-cia_form - format for CIA table (1 = HITRAN, 2 = He-, H2- tables, 0 = special e.g. H- opacity) \
+cia_form - format for CIA table (1 = HITRAN, 2 = He-, H2- tables, 0 = special e.g. H- opacity, 3 = reformatted table) \
 cia_sp - names of CIA species \
 cia_paths - paths to the CIA tables in order of cia_sp, use '.' for special species
 
@@ -191,7 +193,7 @@ ray_paths - paths to Rayleigh scattering tables in order of ray_sp
 
 # Plotting results
 
-A python plotting routine, 'plot_TP.py' is provided to plot the results of the simulation.
+A python plotting routines, 'plot_TP.py'and 'plot_flux.py' are provided to plot the results of the simulation.
 
 # Gaussian Ordinance values
 
@@ -202,7 +204,6 @@ You will need to clean and recompile the code if these are changed. Beware, some
 
 For shortwave scattering problems we recommend the adding method as included, or if more accuracy is needed the SDA or Toon89 methods.
 For longwave scattering problems we recommend the linear absorption approximation method or if more accuracy is required the VIM or Toon89 methods.
-
 
 # Future developments
 

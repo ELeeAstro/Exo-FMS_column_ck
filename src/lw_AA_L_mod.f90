@@ -1,3 +1,11 @@
+!!!
+! Elspeth KH Lee - Aug 2023 : Initial version
+! lw: (Extended) Absorption Approximation following Li (2002) (alpha-nEAA) - This is the linear in tau method
+! However, I use the Toon et al. (1989) method rather than Li (2002), as it is more stable at low optical depth.
+!     Pros: Very fast method with LW scattering approximation, no matrix inversions
+!     Cons: Not technically multiple scattering (can be quite innacurate at even moderate albedo)
+!!!
+
 module lw_AA_L_mod
   use, intrinsic :: iso_fortran_env
   use WENO4_mod, only : interpolate_weno4  

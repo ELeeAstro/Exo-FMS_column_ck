@@ -1,3 +1,10 @@
+!!!
+! Elspeth K.H. Lee (Jun 2024):
+! Burrows et al. (1999) analytical chemical equilibrium method for 
+! H2, He, H2O, CH4, CO, N2, NH3 
+! Solar metallicity only!
+!!!
+
 module ce_Burrows_mod
   use, intrinsic :: iso_fortran_env
   implicit none

@@ -1,3 +1,10 @@
+!!!
+! Elspeth K.H. Lee (Jun 2024):
+! Interpolates chemical equilibrium values from a table (see CE_tables directory)
+! Typically used to find CIA opacity species, but can be used to find other species
+! Also interpolates the mean molecular weight for opacity calculations.
+!!!
+
 module ce_interp_mod
   use, intrinsic :: iso_fortran_env
   implicit none

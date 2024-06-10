@@ -1,3 +1,11 @@
+!!!
+! Elspeth KH Lee - Aug 2023 : Initial version
+!
+! sw: alpha-4SDA - 4 stream analytic spherical harmonic method with doubling adding method (Zhang & Li 2013)
+! Pros: Fast and accurate method with good multiple scattering approximation, no matrix inversions
+! Cons: Still an approximation (though quite good for a non-matrix method)
+!!!
+
 module sw_SDA_mod
   use, intrinsic :: iso_fortran_env
   implicit none

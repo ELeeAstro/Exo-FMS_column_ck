@@ -1,4 +1,8 @@
-!! This module
+!!!
+! Elspeth K.H. Lee (Jun 2024)
+! A large module for generating various initial T-p profiles for Exo-FMS.
+! Options for semi-grey and picket-fence
+!!!
 
 module IC_mod
   use, intrinsic :: iso_fortran_env

@@ -1,3 +1,12 @@
+!!!
+! Elspeth KH Lee - Jun 2024 : Overhauled
+!
+! sw: Adding method for shortwave radiation, used in various Earth GCMs (e.g. Mendonça et al. 2015)
+!     Pros: Very fast method with approximate scattering, decently accurate
+!     Cons: Not multiple scattering
+!!!
+
+
 module sw_adding_mod
   use, intrinsic :: iso_fortran_env
   implicit none

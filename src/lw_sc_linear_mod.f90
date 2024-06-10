@@ -1,3 +1,14 @@
+!!!
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Oct 2021 : adding method & Bezier interpolation
+!                - Aug 2023 : Change quadrature following Li (2000)
+!                - Jun 2024 : Change quadrature following Hogan (2004)
+! lw: Two-stream method following the short characteristics method (e.g. Helios-r2: Kitzmann et al. 2018)
+!     Uses the method of short characteristics (Olson & Kunasz 1987) with linear interpolants.
+!     Pros: Very fast, accurate at high optical depths, very stable
+!     Cons: No lw scattering (but could combine with AA if needed)
+!!!
+
 module lw_sc_linear_mod
   use, intrinsic :: iso_fortran_env
   use WENO4_mod, only : interpolate_weno4  

@@ -1,3 +1,14 @@
+!!!
+! Elspeth KH Lee - May 2021 : Initial version
+!                - Jan 2022 : Working version
+!                - Jun 2024 : Optimisations
+!
+! lw: Two-stream method following the "Toon89" method (Toon et al. 1989)
+!     Based on the CHIMERA code by Mike Line, but cleaned up slightly
+!     Pros: Fast, accurate at high optical depths, well used and familiar method
+!     Cons: For longwave combined high ssa and g (0.9+,0.9+) can be unstable
+!!!
+
 module lw_Toon_mod
   use, intrinsic :: iso_fortran_env
   use WENO4_mod, only : interpolate_weno4  

@@ -1,3 +1,12 @@
+!!!
+! Elspeth KH Lee - Aug 2023 : Initial version
+!
+! lw: Variational Iteration Method four stream variant (alpha-4VIM) - Follows Zhang et al. (2017)
+!     Uses (E)AA as an intial guess, then applies VIM to calculate the scattering component
+! Pros: Very fast method with LW scattering approximation, no matrix inversions - better than AA alone
+! Cons: Still an approximation (though quite good for a non-matrix method)
+!!!
+
 module lw_VIM_mod
   use, intrinsic :: iso_fortran_env
   use WENO4_mod, only : interpolate_weno4  
