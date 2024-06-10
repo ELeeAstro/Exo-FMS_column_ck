@@ -1,3 +1,13 @@
+!!!
+! Elspeth KH Lee - Jun 2024: Initial version
+! sw: Four stream spherical harmonic method with multiple scattering (Rooney et al. 2023) 
+! following the PICASO method
+!     Pros: 
+!     Cons: 
+!!!
+
+!!! In development!!
+
 module sw_SH4_mod
   use, intrinsic :: iso_fortran_env
   implicit none
