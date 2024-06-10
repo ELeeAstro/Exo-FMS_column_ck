@@ -180,7 +180,7 @@ contains
     hg(:) = g_in(:)
 
     !! Reform edge optical depths
-    tau(1) = tau_in(1)
+    tau(1) = 0.0_dp
     do k = 1, nlay
       tau(k+1) = tau(k) + dtau(k)
     end do

@@ -75,10 +75,6 @@ contains
     !! Net sw flux
     sw_net(:) = sw_up(:) - sw_down(:)
 
-    !print*, sw_net(:)
-
-    !stop
-
     !! Absorbed Stellar Radiation (ASR)
     asr = sw_down(1) - sw_up(1)
 
@@ -110,7 +106,7 @@ contains
     real(dp), dimension(nlay) :: del, lam, expo, exptrm, q, Q1, Q2
     real(dp), dimension(nlay) :: Q1mn, Q2mn, Q1pl, Q2pl
     real(dp), dimension(nlay) :: zmn, zpl, zmn_up, zpl_up, zmn_down, zpl_down
-    real(dp), dimension(nlev) :: expon, tau_e
+    real(dp), dimension(nlev) :: expon, tau_e, dir
 
     real(dp), dimension(5,2*nlay) :: Mb
     real(dp), dimension(7,2*nlay) :: Mb_F
@@ -124,9 +120,10 @@ contains
     real(dp), dimension(2*nlev) :: flux_temp
     real(dp) :: flux_bot
 
+    real(dp), parameter :: eps_20 = 1.0e-20_dp
 
     real(dp), dimension(nlay) :: sigma_sq, pmom2, fc, c
-    real(dp), dimension(nlay) :: w0, g0
+    real(dp), dimension(nlay) :: w0, hg
     integer :: info
     integer, dimension(2*nlay) :: ipiv
 
@@ -160,47 +157,51 @@ contains
 
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
     !! Assume HG phase function for scaling (g**nstream)
-    fc(:) = g_in(:)**(nstr)
-    pmom2(:) = g_in(:)**(nstr+1)
+    ! where (g_in(:) >= 1e-6_dp)
+    !   fc(:) = g_in(:)**(nstr)
+    !   pmom2(:) = g_in(:)**(nstr+1)
+    !   sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
+    !   & ( log(fc(:)**2/pmom2(:)**2) )
+    !   c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
+    !   fc(:) = c(:)*fc(:)
 
-    where (fc(:) /=  pmom2(:))
-      sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
-      & ( log(fc(:)**2/pmom2(:)**2) )
-      c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
-      fc(:) = c(:)*fc(:)
+    !   w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
+    !   dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
 
-      w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
-      dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
+    ! elsewhere
+    !   w0(:) = w_in(:)
+    !   fc(:) = 0.0_dp
+    ! end where
 
-    elsewhere
-      w0(:) = w_in(:)
-      fc(:) = 0.0_dp
-    end where
+    fc(:) = 0.0_dp
 
-    g0(:) = g_in(:)
+    hg(:) = g_in(:)
+    w0(:) = w_in(:) 
 
     mu_z = mu_in(nlev) ! Can't do spherical geometry yet
 
     !! Reform edge optical depths
-    tau_e(1) = tau_in(1)
+    tau_e(1) = 0.0_dp
     do k = 1, nlay
       tau_e(k+1) = tau_e(k) + dtau(k)
     end do
+
+    dir(:) = F0_in * mu_z * exp(-tau_e(:)/mu_z)
 
     Pu0(1) = 1.0_dp
     Pu0(2) = -mu_z
 
     w_multi(1,:) = 1.0_dp
-    w_multi(2,:) = 3.0_dp * (g0(:) - fc(:)) / (1.0_dp - fc(:))
+    w_multi(2,:) = 3.0_dp * (hg(:) - fc(:)) / (1.0_dp - fc(:))
 
     do l = 1, nstr
-      a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:)
-      bb(l,:) = ((w0(:) * w_multi(l,:)) * F0_in * Pu0(l)) / (4.0_dp*pi)
+      a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:) + eps_20
+      bb(l,:) = ((w0(:) * w_multi(l,:)) * 1.0_dp * Pu0(l)) / (4.0_dp*pi)
     end do
 
     surf_reflect = 0.0_dp
 
-    b_surface = 0.0_dp + surf_reflect*mu_z*F0_in*exp(-tau_e(nlev)/mu_z)
+    b_surface = 0.0_dp + surf_reflect*mu_z*1.0_dp*exp(-tau_e(nlev)/mu_z)
 
     b_top = 0.0_dp
 
@@ -208,9 +209,9 @@ contains
     expo(:) = min(lam(:)*dtau(:),35.0_dp)
     exptrm(:) = exp(-expo(:))
 
-    del(:) = 1.0_dp/((1.0_dp / mu_z**2) - lam(:)**2)
-    eta(1,:) = (bb(2,:)/mu_z - a(2,:)*bb(1,:)) * del(:)
-    eta(2,:) = (bb(1,:)/mu_z - a(1,:)*bb(2,:)) * del(:)
+    del(:) = ((1.0_dp / mu_z)**2 - a(1,:)*a(2,:))
+    eta(1,:) = (bb(2,:)/mu_z - a(2,:)*bb(1,:)) / del(:)
+    eta(2,:) = (bb(1,:)/mu_z - a(1,:)*bb(2,:)) / del(:)
 
     q(:) = lam(:)/a(2,:)
     Q1(:) = (1.0_dp + 2.0_dp*q(:))*pi
@@ -306,9 +307,12 @@ contains
     flux_bot = sum(F_bot(:)*X(:)) + G_bot
 
     do i = 1, nlev
-      flx_down(i) = flux_temp(i*2-1) + mu_z * F0_in * expon(i)
-      flx_up(i) = flux_temp(i*2)
+      flx_down(i) = flux_temp(i*2-1)*F0_in 
+      flx_up(i) = flux_temp(i*2)*F0_in
     end do
+
+    ! Add direct beam
+    flx_down(:) = flx_down(:) + dir(:)
 
   end subroutine sw_SH_two_stream
 
