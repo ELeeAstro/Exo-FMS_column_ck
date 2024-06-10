@@ -1,23 +1,23 @@
 &FMS_RC_nml
 
 sw_scheme = 'sw_SDA'
-lw_scheme = 'lw_AA_E'
+lw_scheme = 'lw_VIM'
 opac_scheme = 'ck'
-adj_scheme = 'MLT'
-CE_scheme = 'interp'
+adj_scheme = 'Ray_dry'
+CE_scheme = 'Burrows'
 
-nb = 32
-wl_sh = 'opac_data/wavelengths_GCM_32.txt'
-stellarf_sh = 'sw_flux/sw_band_flux_HD189_32.txt'
+nb = 11
+wl_sh = 'opac_data/wavelengths_GCM_11.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_HD189_11.txt'
 
 Rs = 0.805 
 sm_ax = 0.031
 
-n_ck = 1
+n_ck = 4
 ng = 8
-nsp = 5
-n_cia = 7
-n_ray = 4
+nsp = 7
+n_cia = 2
+n_ray = 2
 
 nlay = 54
 a_sh = 'hybrid_sigma/Hybrid_sigma_grid_a_54.txt'
@@ -25,8 +25,8 @@ b_sh = 'hybrid_sigma/Hybrid_sigma_grid_b_54.txt'
 
 pref = 1.0e8
 
-t_step = 60.0
-nstep = 10000
+t_step = 30.0
+nstep = 20000
 Rd_air = 3573.0
 cp_air = 12698.0
 grav = 21.78
@@ -51,8 +51,8 @@ table_num = 1
 
 &sp_nml
 
-sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
-VMR_tab_sh = 'CE_tables/FastChem_ck_1x_int.txt'
+sp_list = 'H2', 'He', 'H2O', 'CH4', 'CO', 'N2', 'NH3'
+VMR_tab_sh = ''
 
 /
 
@@ -64,29 +64,28 @@ gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.16523105144
 
 &ck_nml
 
-PM = .True.
+PM = .False.
 RORR = .False.
-AEE = .False.
+AEE = .True.
 ck_interp = 2
-ck_form = 2
-ck_sp = 'PM'
-ck_paths = 'opac_data/ck/Premixed_1x_g8_32.txt'
+ck_form = 2, 2, 2, 2
+ck_sp = 'H2O', 'CH4', 'CO', 'NH3' 
+ck_paths = 'opac_data/ck/H2O_g8_11.txt', 'opac_data/ck/CH4_g8_11.txt', 'opac_data/ck/CO_g8_11.txt', 'opac_data/ck/NH3_g8_11.txt'
 
 /
 
 &cia_nml
 
-cia_form = 1, 1, 1, 1, 0, 2, 2
-cia_sp = 'H2-H2', 'H2-He', 'H2-H', 'He-H', 'H-', 'He-', 'H2-'
-cia_paths = 'opac_data/cia/H2-H2_2011.cia', 'opac_data/cia/H2-He_2011.cia', 'opac_data/cia/H2-H_2011.cia',
-'opac_data/cia/He-H_2011.cia', '', 'opac_data/cia/He-_ff.txt', 'opac_data/cia/H2-_ff.txt'
+cia_form = 3, 3
+cia_sp = 'H2-H2', 'H2-He'
+cia_paths = 'opac_data/cia/H2-H2_reform_11.txt', 'opac_data/cia/H2-He_reform_11.txt'
 
 /
 
 &ray_nml
 
-ray_form = 1, 1, 1, 1
-ray_sp = 'H2', 'He', 'H', 'e-'
-ray_paths = 'opac_data/ray/Ray_H2_32.txt', 'opac_data/ray/Ray_He_32.txt', 'opac_data/ray/Ray_H_32.txt', 'opac_data/ray/Ray_e-_32.txt'
+ray_form = 1, 1
+ray_sp = 'H2', 'He'
+ray_paths = 'opac_data/ray/Ray_H2_11.txt', 'opac_data/ray/Ray_He_11.txt'
 
 /

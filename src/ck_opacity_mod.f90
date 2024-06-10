@@ -129,7 +129,7 @@ contains
     real(dp), dimension(n_sp, nlay), intent(in) :: VMR
     real(dp), dimension(n_g,n_b,nlay), intent(out) :: k_tot, a_tot, g_tot
 
-    integer :: b, g, u_nml, k
+    integer :: b, g, k
     real(dp), allocatable, dimension(:,:,:), save :: k_ck_sp
     real(dp), allocatable, dimension(:,:), save :: k_ck
     real(dp), dimension(nlay) :: k_cont, k_Ray
@@ -193,8 +193,8 @@ contains
           end do
         else if (AEE .eqv. .True.) then
           !print*, b, 'AEE'
-          call adap_equiv_extinction(nlay, n_ck, n_g, n_sp, wl(b), grav, &
-          &  pe(:), Tl(:), Nl(:), RH(:), VMR(:,:), k_ck_sp(:,:,:), k_ck(:,:))
+          call adap_equiv_extinction(nlay, n_ck, n_g, n_sp, grav, &
+          &  pe(:), Nl(:), RH(:), VMR(:,:), k_ck_sp(:,:,:), k_ck(:,:))
         else if (PM .eqv. .True.) then
           !print*, b, 'PM'
           k_ck(:,:) = k_ck_sp(1,:,:)
@@ -243,12 +243,12 @@ contains
 
   end subroutine ck_opacity
 
-  subroutine adap_equiv_extinction(nlay, n_ck, n_g, n_sp, wl_in, grav, pe, Tl, Nl, RH, VMR, k_ck_sp, k_ck)
+  subroutine adap_equiv_extinction(nlay, n_ck, n_g, n_sp, grav, pe, Nl, RH, VMR, k_ck_sp, k_ck)
     implicit none
 
     integer, intent(in) :: nlay, n_ck, n_g, n_sp
-    real(dp), intent(in) :: grav, wl_in
-    real(dp), dimension(nlay), intent(in) :: Tl, Nl, RH
+    real(dp), intent(in) :: grav
+    real(dp), dimension(nlay), intent(in) :: Nl, RH
     real(dp), dimension(nlay+1), intent(in) :: pe
     real(dp), dimension(n_sp,nlay), intent(in) :: VMR
     real(dp), dimension(n_ck,n_g,nlay), intent(in) :: k_ck_sp
@@ -258,11 +258,10 @@ contains
     integer :: k, s, g
     integer, dimension(n_ck) :: max_idx
     real(dp) :: top, bot, dpe, tau_tot, tau_s, tau_all
-    real(dp), dimension(nlay) :: bl
     real(dp), dimension(n_ck,nlay) :: k_av
     real(dp), dimension(n_ck) :: tau_av
     logical, dimension(n_ck) :: major
-    real(dp), dimension(n_g) :: Trans, tau_s_g
+    !real(dp), dimension(n_g) :: Trans, tau_s_g
 
     !! Calculate average kappa in for each species in each layer for thermal component
     !! First just try a general non-weighted average
@@ -307,38 +306,40 @@ contains
     major(max_idx(1)) = .True.
 
     !! Combine the grey average opacities of minor species with the k-coefficents of the major species
-    !k_ck(:,:) = 0.0_dp
-    !do k = 1, nlay
-    !  do s = 1, n_ck
-    !    if (major(s) .eqv. .True.) then
-    !      ! Combine full k-table
-    !      k_ck(:,k) = k_ck(:,k) + k_ck_sp(s,:,k) * (VMR(ck(s)%iVMR,k) * Nl(k) / RH(k))
-    !    else
-          ! Combine average grey value
-    !      k_ck(:,k) = k_ck(:,k) + k_av(s,k)
-    !    end if
-    !  end do
-    !end do
+    k_ck(:,:) = 0.0_dp
+    do k = 1, nlay
+     do s = 1, n_ck
+       if (major(s) .eqv. .True.) then
+         !! Combine full k-table
+         k_ck(:,k) = k_ck(:,k) + k_ck_sp(s,:,k) * (VMR(ck(s)%iVMR,k) * Nl(k) / RH(k))
+       else
+         !! Combine average grey value
+         k_ck(:,k) = k_ck(:,k) + k_av(s,k)
+       end if
+     end do
+    end do
 
     !! Combine the grey average opacities of minor species with the k-coefficents of the major species
     !! Multiply the transmission of each species at each layer for each g coordinate
-    do k = 1, nlay
-      Trans(:) = 1.0_dp 
-      do s = 1, n_ck
-        if (major(s) .eqv. .True.) then
-          ! Combine full k-table
-          tau_s_g(:) = ((k_ck_sp(s,:,k) * VMR(ck(s)%iVMR,k) * Nl(k) / RH(k)) *  dpe)/grav
-          Trans(:) =  Trans(:) * exp(-tau_s_g(:))
-        else
-          ! Combine average grey value
-          tau_s = (k_av(s,k) * dpe)/grav
-          Trans(:) = Trans(:) * exp(-tau_s)
-        end if
-      end do
-      ! Find the opacity of each g-ordinance for this layer
-      k_ck(:,k) = -(log(Trans(:)) * grav) / dpe
-     !print*,k_ck(:,k) 
-    end do
+    ! do k = 1, nlay
+    !   Trans(:) = 1.0_dp
+    !   dpe = pe(k+1) - pe(k)
+    !   do s = 1, n_ck
+    !     if (major(s) .eqv. .True.) then
+    !       ! Combine full k-table
+    !       tau_s_g(:) = ((k_ck_sp(s,:,k) * VMR(ck(s)%iVMR,k) * Nl(k) / RH(k)) *  dpe)/grav
+    !       Trans(:) =  Trans(:) * exp(-tau_s_g(:))
+    !     else
+    !       ! Combine average grey value
+    !       tau_s = (k_av(s,k) * dpe)/grav
+    !       Trans(:) = Trans(:) * exp(-tau_s)
+    !     end if
+    !   end do
+    !   ! Find the opacity of each g-ordinance for this layer
+    !   k_ck(:,k) = -(log(Trans(:)) * grav) / dpe
+    !   print*,k_ck(:,k) 
+    ! end do
+
 
   end subroutine adap_equiv_extinction
 
@@ -352,15 +353,13 @@ contains
     real(dp), dimension(n_g), intent(out) :: k_ck
 
     integer :: i, j, g, s, n_g2
-    real(dp) :: VMR_tot, VMR_cum, intg_sum
-    real(dp), dimension(n_g*n_g) :: k_mix, k_mix_sort, logkmix, k_mix_cp
-    real(dp), dimension(n_g*n_g) :: wt_mix, wt_mix_sort
+    real(dp) :: VMR_tot, VMR_cum
+    real(dp), dimension(n_g*n_g) :: k_mix
+    real(dp), dimension(n_g*n_g) :: wt_mix
     real(dp), dimension(0:n_g*n_g) :: intg, x
-    integer, dimension(n_g*n_g) :: sort_indicies
-    integer :: loc
 
     integer :: ix, ix1
-    real(dp) :: xval, x0, x1, y0, y1, yval
+    real(dp) :: xval
 
     !! If 1 ck table, then it's just VMR * ck coefficents
     if (n_ck == 1)then
@@ -845,6 +844,36 @@ contains
         !print*, s, b, k_ff
         cycle
       end if
+      if (CIA(s)%form == 3) then
+        ! Table already interpolated to wavenumber centers - only interpolate in T
+        ! Locate required T indexes in CIA wn array for layer temperature
+        call locate(CIA(s)%T(:),T,iT)
+        iT1 = iT + 1
+        !! Perform temperature edge case check
+        if (iT < 1) then
+          k_cont = k_cont + CIA(s)%kap(b,1)  &
+            & * VMR(CIA(s)%iVMR(1)) * N &
+            & * VMR(CIA(s)%iVMR(2)) * N
+        else if (iT1 > CIA(s)%nT) then
+          k_cont = k_cont + CIA(s)%kap(b,CIA(s)%nT)  &
+            & * VMR(CIA(s)%iVMR(1)) * N &
+            & * VMR(CIA(s)%iVMR(2)) * N
+        else
+          !! Inside T range, perform interpolation
+          xval = T ; x0 = CIA(s)%T(iT) ; x1 = CIA(s)%T(iT1)
+          y0 = CIA(s)%kap(b,iT) ; y1 = CIA(s)%kap(b,iT1)
+
+          ! Perform log linear interpolation
+          call linear_interp(xval, x0, x1, y0, y1, yval)
+
+          k_cont = k_cont + yval  &
+           & * VMR(CIA(s)%iVMR(1)) * N &
+           & * VMR(CIA(s)%iVMR(2)) * N
+
+        end if
+        cycle
+      end if
+
 
       ! If band is outside table wavelength range
       if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
@@ -941,20 +970,18 @@ contains
     character(len=10), dimension(n_sp), intent(in) :: sp_list
 
     integer :: u, l, i, j, g, b, n, s, uR
-    integer :: n_wlr, ni
+    integer :: ni
 
-    integer :: n_T, n_P, n_G, n_Rays
-    real(dp) :: dum1r
     real(dp), allocatable, dimension(:) :: wl_dum
 
     integer :: stat
 
     character(len=10) :: name
-    integer :: nrec, iwn, iwn1
+    integer :: nrec
     real(dp) :: wn_s, wn_e, temp_r, kmax, dum
-
+    real(dp), allocatable, dimension(:) :: dum_b
+    
     logical :: exists
-    integer :: iostat_end
 
     ! Open the namelist file
     open(newunit=u_nml, file='FMS_RC.nml', action='read')
@@ -1217,8 +1244,52 @@ contains
           !CIA(s)%wl(:) = CIA(s)%wl(:) * 1.0e-4_dp
           CIA(s)%wn(:) = 1.0_dp/(CIA(s)%wl(:) * 1.0e-8_dp)
 
-
           close(u)
+        else if (CIA(s)%form == 3) then
+           !! Read in reformatted cia table (for memory efficenct models)
+            open(newunit=u,file=trim(CIA(s)%path),action='read',status='old')
+
+            read(u,*) CIA(s)%nT, CIA(s)%nwl
+
+            allocate(CIA(s)%wl(CIA(s)%nwl))
+            allocate(CIA(s)%wn(CIA(s)%nwl))
+            allocate(CIA(s)%T(CIA(s)%nT))
+            allocate(CIA(s)%kap(CIA(s)%nwl,CIA(s)%nT))
+
+            read(u,*) CIA(s)%T(:)
+            read(u,*) CIA(s)%wn(:)
+
+            read(u,*)
+
+            CIA(s)%wl(:) = 1.0_dp/CIA(s)%wn(:) * 1e-4_dp
+
+            do i = 1, CIA(s)%nT
+              read(u,*) CIA(s)%kap(:,i)
+            end do
+
+            !! We must reverse the wn array to conform to low to high wavelength
+            ! band structure
+            allocate(dum_b(CIA(s)%nwl))
+            !! Reverse wn and wl arrays
+            dum_b(:) = CIA(s)%wn(:)
+            do j = 1,  CIA(s)%nwl
+              CIA(s)%wn(j) = dum_b(CIA(s)%nwl-j+1)
+            end do
+
+            dum_b(:) = CIA(s)%wl(:)
+            do j = 1,  CIA(s)%nwl
+              CIA(s)%wl(j) = dum_b(CIA(s)%nwl-j+1)
+            end do
+
+            do i = 1, CIA(s)%nT
+              dum_b(:) = CIA(s)%kap(:,i)
+              do j = 1, CIA(s)%nwl
+                CIA(s)%kap(j,i) = dum_b(CIA(s)%nwl-j+1)
+              end do
+            end do
+
+            deallocate(dum_b)
+            close(u)           
         end if
       end do
     end if
@@ -1291,7 +1362,8 @@ contains
     real(dp), dimension(6), parameter :: &
       & Cn_bf = (/152.519, 49.534, -118.858, 92.536, -34.194, 4.982 /)
 
-    real(dp), parameter :: alf = 1.439e8_dp, lam_0 = 1.6419_dp
+    !real(dp), parameter :: alf = 1.439e8_dp
+    real(dp), parameter :: lam_0 = 1.6419_dp
 
     integer, intent(in) :: s, b, n_sp
     real(dp), dimension(n_sp), intent(in) :: VMR
@@ -1600,7 +1672,7 @@ contains
     real(dp), intent(in) :: x
     real(dp), intent(out) :: y
 
-    real(dp) :: xc, dx, dx1, dy, dy1, w, yc, t, wlim, wlim1
+    real(dp) :: dx, dx1, dy, dy1, ww, yc, t, wlim, wlim1
 
     !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
     dx = xi(2) - xi(1)
@@ -1611,25 +1683,25 @@ contains
     if (x > xi(1) .and. x < xi(2)) then
       ! left hand side interpolation
       !print*,'left'
-      w = dx1/(dx + dx1)
+      ww = dx1/(dx + dx1)
       wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
       wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
-        w = 1.0_dp
+      if ((ww <= min(wlim,wlim1)) .or. (ww >= max(wlim,wlim1))) then
+        ww = 1.0_dp
       end if
-      yc = yi(2) - dx/2.0_dp * (w*dy/dx + (1.0_dp - w)*dy1/dx1)
+      yc = yi(2) - dx/2.0_dp * (ww*dy/dx + (1.0_dp - ww)*dy1/dx1)
       t = (x - xi(1))/dx
       y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
     else ! (x > xi(2) and x < xi(3)) then
       ! right hand side interpolation
       !print*,'right'
-      w = dx/(dx + dx1)
+      ww = dx/(dx + dx1)
       wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
       wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if (w <= min(wlim,wlim1) .or. w >= max(wlim,wlim1)) then
-        w = 1.0_dp
+      if ((ww <= min(wlim,wlim1)) .or. (ww >= max(wlim,wlim1))) then
+        ww = 1.0_dp
       end if
-      yc = yi(2) + dx1/2.0_dp * (w*dy1/dx1 + (1.0_dp - w)*dy/dx)
+      yc = yi(2) + dx1/2.0_dp * (ww*dy1/dx1 + (1.0_dp - ww)*dy/dx)
       t = (x - xi(2))/(dx1)
       y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
     end if

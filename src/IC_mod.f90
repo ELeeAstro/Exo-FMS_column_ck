@@ -78,7 +78,7 @@ contains
 
     integer :: i, nTP, u
 
-    integer :: iT, iT1, ip, ip1
+    integer :: ip, ip1
 
     open(newunit=u,file='CAMEMBERT_GJ1214b_IC_H2He.dat',action='read')
 

@@ -1,4 +1,4 @@
-module ce_interp
+module ce_interp_mod
   use, intrinsic :: iso_fortran_env
   implicit none
 
@@ -264,4 +264,4 @@ module ce_interp
 
   end subroutine locate
 
-end module ce_interp
+end module ce_interp_mod

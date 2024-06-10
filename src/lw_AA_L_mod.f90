@@ -38,7 +38,7 @@ module lw_AA_L_mod
 contains
 
 
-  subroutine lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
+  subroutine lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     implicit none
 
     !! Input variables
@@ -49,7 +49,6 @@ contains
     real(dp), dimension(nlev), intent(in) :: pe
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nb), intent(in) :: a_surf
     real(dp), intent(in) :: Tint
 
     !! Output variables
@@ -84,7 +83,7 @@ contains
       lw_up_b(b,:) = 0.0_dp
       lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_AA_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), &
+        call lw_AA_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
           & lw_up_g(g,:), lw_down_g(g,:))
         lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
         lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
@@ -101,14 +100,14 @@ contains
 
   end subroutine lw_AA_L
 
-  subroutine lw_AA_linear(nlay, nlev, be, be_int, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
+  subroutine lw_AA_linear(nlay, nlev, be, be_int, tau_in, w_in, g_in, flx_up, flx_down)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
     real(dp), dimension(nlev), intent(in) :: be, tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
-    real(dp), intent(in) :: be_int, a_surf_in
+    real(dp), intent(in) :: be_int
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down

@@ -87,7 +87,7 @@ contains
       lw_up_b(b,:) = 0.0_dp
       lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_Toon89(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), &
+        call lw_Toon89(nlay, nlev, be(b,:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), &
           & lw_up_g(g,:), lw_down_g(g,:))
         lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
         lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
@@ -107,14 +107,14 @@ contains
 
   end subroutine lw_Toon
 
-  subroutine lw_Toon89(nlay, nlev, be, be_int, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
+  subroutine lw_Toon89(nlay, nlev, be, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
     real(dp), dimension(nlev), intent(in) :: be, tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
-    real(dp), intent(in) :: be_int, a_surf_in
+    real(dp), intent(in) :: a_surf_in
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
@@ -229,9 +229,6 @@ contains
     do n = 1, nlay
       xk1(n) = xkk(2*n-1) + xkk(2*n)
       xk2(n) = xkk(2*n-1) - xkk(2*n)
-      if (xk2(n) == 0.0_dp) then
-        cycle
-      end if
       if (abs(xk2(n)/xkk(2*n-1)) < 1e-30_dp) then
         xk2(n) = 0.0_dp
       end if

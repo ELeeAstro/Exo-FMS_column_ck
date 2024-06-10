@@ -155,7 +155,7 @@ contains
 
     g1(:) = sqrt3d2 * (2.0_dp-w0(:)*(1.0_dp+hg(:)))
     g2(:) = (sqrt3d2*w0(:)) * (1.0_dp-hg(:))
-    where (g2(:) == 0.0_dp)
+    where (g2(:) <= 1.0e-10_dp)
       g2(:) = 1.0e-10_dp
     end where
     g3(:) = (1.0_dp - sqrt3*hg(:)*mu_zm(:))/2.0_dp
@@ -165,7 +165,7 @@ contains
     gam(:) = (g1(:) - lam(:))/g2(:)
 
     denom(:) = lam(:)**2 - 1.0_dp/(mu_zm(:)**2)
-    where (denom(:) == 0.0_dp)
+    where (denom(:) <= 1.0e-10_dp)
       denom(:) = 1.0e-10_dp
     end where
     Am(:) = F0_in * w0(:) * (g4(:) * (g1(:) + 1.0_dp/mu_zm(:)) + g2(:)*g3(:))/denom(:)
@@ -224,9 +224,6 @@ contains
     do n = 1, nlay
       xk1(n) = xk(2*n-1)+xk(2*n)
       xk2(n) = xk(2*n-1)-xk(2*n)
-      if (xk2(n) == 0.0_dp) then
-        cycle
-      end if
       if (abs(xk2(n)/xk(2*n-1)) < 1e-30_dp) then
         xk2(n) = 0.0_dp
       end if

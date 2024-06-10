@@ -1,17 +1,17 @@
 &FMS_RC_nml
 
-ts_scheme = 'Shortchar_Bezier'
+sw_scheme = 'sw_Toon'
+lw_scheme = 'lw_AA_E'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
 CE_scheme = 'Burrows'
 
-data_dir = 'data/'
 nb = 11
-wl_sh = 'wavelengths_GCM_11.txt'
-stellarf_sh = 'sw_band_flux_HD209_11.txt'
+wl_sh = 'opac_data/wavelengths_GCM_11.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_HD189_11.txt'
 
-Rs = 1.203
-sm_ax = 0.04747
+Rs = 0.805 
+sm_ax = 0.031
 
 n_ck = 4
 ng = 8
@@ -20,26 +20,24 @@ n_cia = 2
 n_ray = 2
 
 nlay = 54
-a_sh = 'Hybrid_sigma_grid_a_54.txt'
-b_sh = 'Hybrid_sigma_grid_b_54.txt'
+a_sh = 'hybrid_sigma/Hybrid_sigma_grid_a_54.txt'
+b_sh = 'hybrid_sigma/Hybrid_sigma_grid_b_54.txt'
 
 pref = 1.0e8
 
-t_step = 20.0
-nstep = 100000
-Rd_air = 3556.8
-cp_air = 1.3e4
-grav = 8.98
-mu_z = 0.5
-Tirr = 2091.0
-Tint = 571.0
+t_step = 60.0
+nstep = 10000
+Rd_air = 3573.0
+cp_air = 12698.0
+grav = 21.78
+mu_z = 0.577
+Tirr = 1200.0
+Tint = 381.0
 
 k_V = 6e-4
 k_IR = 1e-3
 fl = 1.0
 met = 0.0
-
-Bezier = .True.
 
 zcorr = .False.
 zcorr_meth = 1
@@ -47,21 +45,20 @@ radius = 7.1492e7
 
 iIC = 4
 corr = .True.
-table_num = 2
+table_num = 1
 
 /
 
 &sp_nml
 
-!Burrows species list
-sp_list = 'H2', 'He', 'H2O', 'CH4','CO', 'N2', 'NH3'
+sp_list = 'H2', 'He', 'H2O', 'CH4', 'CO', 'N2', 'NH3'
+VMR_tab_sh = ''
 
 /
 
 &gw_nml
 
-gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635,
-0.01630362887156367, 0.01630362887156367, 0.00869637112843635
+gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635, 0.01630362887156367, 0.01630362887156367, 0.00869637112843635
 
 /
 
@@ -72,18 +69,16 @@ RORR = .True.
 AEE = .False.
 ck_interp = 2
 ck_form = 2, 2, 2, 2
-ck_sp = 'H2O','CH4', 'CO', 'NH3'
-ck_paths = 'data/ck/11_ck_data_g8/H2O_ck_HELIOSK_11.txt','data/ck/11_ck_data_g8/CH4_ck_HELIOSK_11.txt',
-'data/ck/11_ck_data_g8/CO_ck_HELIOSK_11.txt', 'data/ck/11_ck_data_g8/NH3_ck_HELIOSK_11.txt',
-
+ck_sp = 'H2O', 'CH4', 'CO', 'NH3' 
+ck_paths = 'opac_data/ck/H2O_g8_11.txt', 'opac_data/ck/CH4_g8_11.txt', 'opac_data/ck/CO_g8_11.txt', 'opac_data/ck/NH3_g8_11.txt'
 
 /
 
 &cia_nml
 
-cia_form = 1, 1
+cia_form = 3, 3
 cia_sp = 'H2-H2', 'H2-He'
-cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia'
+cia_paths = 'opac_data/cia/H2-H2_reform_11.txt', 'opac_data/cia/H2-He_reform_11.txt'
 
 /
 
@@ -91,6 +86,6 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia'
 
 ray_form = 1, 1
 ray_sp = 'H2', 'He'
-ray_paths = 'data/ray/Ray_H2_11.txt', 'data/ray/Ray_He_11.txt'
+ray_paths = 'opac_data/ray/Ray_H2_11.txt', 'opac_data/ray/Ray_He_11.txt'
 
 /

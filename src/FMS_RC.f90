@@ -26,8 +26,11 @@ program Exo_FMS_RC
   use lw_VIM_mod, only : lw_VIM
   use lw_Toon_mod, only : lw_Toon
 
-  use ce_interp, only : interp_ce_table
+  use ce_interp_mod, only : interp_ce_table
+  use ce_Burrows_mod, only : analytic_Burrows
+
   use ck_opacity_mod, only : ck_opacity
+
   use IC_mod, only : IC_profile
 
   use dry_conv_adj_mod, only : Ray_dry_adj
@@ -247,6 +250,11 @@ program Exo_FMS_RC
         call interp_ce_table(nsp, Tl(k), pl(k), VMR(:,k), mu(k), VMR_tab_sh)
         !print*, Tl(k), pl(k)/1e5_dp, mu(k), VMR(:,k)
       end do
+    case('Burrows')
+      do k = 1, nlay
+        call analytic_Burrows(nsp, Tl(k), pl(k), VMR(:,k))
+        mu(k) = R_gas/Rd_air * 1000.0_dp
+      end do
     case('none')
       do k = 1, nlay
         mu(k) = R_gas/Rd_air * 1000.0_dp
@@ -339,10 +347,10 @@ program Exo_FMS_RC
     select case(lw_scheme)
     case('lw_AA_E')
       ! Absorption approximation exponential in tau (AA_E) with approximate scattering
-      call lw_AA_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr) 
+      call lw_AA_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
     case('lw_AA_L')
       ! Absorption approximation linear in tau (AA_L) with approximate scattering
-      call lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)     
+      call lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)     
     case('lw_sc_linear')
       ! Short characteristics (sc) with linear interpolants with no scattering
       call lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)

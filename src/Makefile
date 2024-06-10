@@ -6,10 +6,10 @@
 F90          = gfortran
 F90LINKER    = gfortran
 DEFS      =
-#FFLAGS   	= -Og -pipe -g -fbacktrace -Wall -Wextra -pedantic -fcheck=all -Wconversion -fbounds-check -llapack
-FFLAGS   = -O3 -pipe -llapack
+#FFLAGS   	= -Og -pipe -g -fbacktrace -Wall -Wextra -pedantic -fcheck=all -Wconversion -fbounds-check
+FFLAGS   = -O3 -pipe
 INCLUDES  =
-LFLAGS    = $(FFLAGS)
+LFLAGS    = -llapack
 
 # for ifort Compiler
 #======================
@@ -36,7 +36,8 @@ OBJECTS = \
 	  call_twostr.o \
 	  k_Rosseland_mod.o \
 	  IC_mod.o \
-    ce_interp.o \
+    ce_interp_mod.o \
+		ce_Burrows_mod.o \
 	  ck_opacity_mod.o \
 	  dry_conv_adj_mod.o \
 		MLT_mod.o \
@@ -61,7 +62,7 @@ EXECS  = ../FMS_RC
 default: FMS_RC
 
 FMS_RC:  $(OBJECTS)
-	 $(F90LINKER) $(LFLAGS) $(OBJECTS) -o $(EXECS)
+	 $(F90LINKER) $(FFLAGS) $(OBJECTS) -o $(EXECS) $(LFLAGS)
 
 clean:
 	rm -f *.o *.mod *__genmod.f90 $(EXECS)

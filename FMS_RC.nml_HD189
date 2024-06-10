@@ -1,13 +1,13 @@
 &FMS_RC_nml
 
-ts_scheme = 'Toon_scatter'
+sw_scheme = 'sw_SDA'
+lw_scheme = 'lw_AA_E'
 opac_scheme = 'ck'
-adj_scheme = 'Ray_dry'
-CE_scheme = 'Interp'
+adj_scheme = 'MLT'
+CE_scheme = 'interp'
 
-data_dir = 'data/'
 nb = 32
-wl_sh = 'wavelengths_GCM_32.txt'
+wl_sh = 'opac_data/wavelengths_GCM_32.txt'
 stellarf_sh = 'sw_flux/sw_band_flux_HD189_32.txt'
 
 Rs = 0.805 
@@ -26,7 +26,7 @@ b_sh = 'hybrid_sigma/Hybrid_sigma_grid_b_54.txt'
 pref = 1.0e8
 
 t_step = 60.0
-nstep = 100000
+nstep = 10000
 Rd_air = 3573.0
 cp_air = 12698.0
 grav = 21.78
@@ -38,8 +38,6 @@ k_V = 6e-4
 k_IR = 1e-3
 fl = 1.0
 met = 0.0
-
-Bezier = .False.
 
 zcorr = .False.
 zcorr_meth = 1
@@ -54,7 +52,7 @@ table_num = 1
 &sp_nml
 
 sp_list = 'H2', 'He', 'H ', 'e-', 'H-'
-VMR_tab_sh = 'data/ce/FastChem_ck_1x_int.txt'
+VMR_tab_sh = 'CE_tables/FastChem_ck_1x_int.txt'
 
 /
 
@@ -72,16 +70,16 @@ AEE = .False.
 ck_interp = 2
 ck_form = 2
 ck_sp = 'PM'
-ck_paths = 'data/ck/Premixed_1x_g8_32.txt'
+ck_paths = 'opac_data/ck/Premixed_1x_g8_32.txt'
 
 /
 
 &cia_nml
 
-cia_form = 1, 1, 1, 1, 0, 2, 2
+cia_form = 3, 3, 3, 3, 0, 2, 2
 cia_sp = 'H2-H2', 'H2-He', 'H2-H', 'He-H', 'H-', 'He-', 'H2-'
-cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H_2011.cia',
-'data/cia/He-H_2011.cia', '', 'data/cia/He-_ff.txt', 'data/cia/H2-_ff.txt'
+cia_paths = 'opac_data/cia/H2-H2_reform_32.txt', 'opac_data/cia/H2-He_reform_32.txt', 'opac_data/cia/H2-H_reform_32.txt',
+'opac_data/cia/He-H_reform_32.txt', '', 'opac_data/cia/He-_ff.txt', 'opac_data/cia/H2-_ff.txt'
 
 /
 
@@ -89,6 +87,6 @@ cia_paths = 'data/cia/H2-H2_2011.cia', 'data/cia/H2-He_2011.cia', 'data/cia/H2-H
 
 ray_form = 1, 1, 1, 1
 ray_sp = 'H2', 'He', 'H', 'e-'
-ray_paths = 'data/ray/Ray_H2_32.txt', 'data/ray/Ray_He_32.txt', 'data/ray/Ray_H_32.txt', 'data/ray/Ray_e-_32.txt'
+ray_paths = 'opac_data/ray/Ray_H2_32.txt', 'opac_data/ray/Ray_He_32.txt', 'opac_data/ray/Ray_H_32.txt', 'opac_data/ray/Ray_e-_32.txt'
 
 /

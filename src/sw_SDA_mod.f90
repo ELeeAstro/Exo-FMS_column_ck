@@ -153,7 +153,7 @@ contains
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
     !! Assume HG phase function for scaling
 
-    where (g_in(:) >= 1e-6_dp)
+    where (g_in(:) >= 1.0e-6_dp)
       fc(:) = g_in(:)**(nstr)
       pmom2(:) = g_in(:)**(nstr+1)
       sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
@@ -189,7 +189,7 @@ contains
       f0 = 1.0_dp/mu_in(k)
 
       !! Omega Legendre polynomial coefficents - scale with delta-M+
-      if (hg(k) /= 0.0_dp) then
+      if (hg(k) >= 1.0e-6_dp) then
         if (TTHG .eqv. .False.) then
           ! Use HG phase function
           om0 = 1.0_dp
@@ -423,7 +423,7 @@ contains
     !! Down and up fluxes are multiplied by the incident flux
     !! up is defined as negative in the adding method, so we make it positive here
     flx_down(:) = (D(:,1) + T(:))*mu_in(nlev)*F0_in
-    flx_up(:) = -U(:,1)*mu_in(nlev)*F0
+    flx_up(:) = -U(:,1)*mu_in(nlev)*F0_in
 
   end subroutine sw_fs_SDA
 
@@ -552,7 +552,7 @@ contains
         vv(imax) = vv(j)
       end if
       indx(j) = imax
-      if (A(j,j) == 0.0_dp) then
+      if (A(j,j) <= tiny) then
         A(j,j) = tiny
       end if
       if (j /= n) then

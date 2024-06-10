@@ -238,12 +238,12 @@ contains
         aV2 = -10.41_dp ; bV2 = 3.31_dp
         aV3 = -6.97_dp ; bV3 = 1.94_dp
         aB = 0.84_dp  ; bB = 0.0_dp
-      else if ((Teff > 1400.0_dp) .and. (Teff < 2000.0_dp)) then
+      else if ((Teff > 1400.0_dp) .and. (Teff <= 2000.0_dp)) then
         aV1 = -23.75_dp ; bV1 = 7.76_dp
         aV2 = -19.95_dp ; bV2 = 6.34_dp
         aV3 = -3.65_dp ; bV3 = 0.89_dp
         aB = 0.84_dp  ; bB = 0.0_dp
-      else if (Teff >= 2000.0_dp) then
+      else
         aV1 = 12.65_dp ; bV1 = -3.27_dp
         aV2 = 13.56_dp ; bV2 = -3.81_dp
         aV3 = -6.02_dp ; bV3 = 1.61_dp
@@ -277,12 +277,12 @@ contains
         aV2 = -10.41_dp ; bV2 = 3.31_dp
         aV3 = -6.97_dp ; bV3 = 1.94_dp
         aB = 0.84_dp  ; bB = 0.0_dp
-      else if ((Teff > 1400.0_dp) .and. (Teff < 2000.0_dp)) then
+      else if ((Teff > 1400.0_dp) .and. (Teff <= 2000.0_dp)) then
         aV1 = -1.68_dp ; bV1 = 0.75_dp
         aV2 = 6.96_dp ; bV2 = -2.21_dp
         aV3 = 0.02_dp ; bV3 = -0.28_dp
         aB = 3.0_dp  ; bB = -0.69_dp
-      else if (Teff >= 2000.0_dp) then
+      else
         aV1 = 10.37_dp ; bV1 = -2.91_dp
         aV2 = -2.4_dp ; bV2 = 0.62_dp
         aV3 = -16.54_dp ; bV3 = 4.74_dp
@@ -360,7 +360,7 @@ contains
     else if ((Teff0 > 750.0_dp) .and. (Teff0 < 1250.0_dp)) then
       a = -0.335_dp * grav**(0.070_dp) -  0.428_dp * grav**(0.135_dp)
       b = 0.0_dp
-    else if (Teff0 >= 1250.0_dp) then
+    else
       a = 16.947_dp - 3.174_dp * grav**(0.070_dp) - 4.051_dp * grav**(0.135_dp)
       b = -5.472_dp + 0.917_dp * grav**(0.070_dp) + 1.170_dp * grav**(0.135_dp)
     end if
