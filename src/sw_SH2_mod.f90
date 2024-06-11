@@ -60,7 +60,8 @@ contains
           cycle
         end if
         do g = 1, ng
-          call sw_SH_two_stream(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), sw_down_g(g,:), sw_up_g(g,:))
+          call sw_SH_two_stream(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), & 
+            & sw_down_g(g,:), sw_up_g(g,:))
           sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
           sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
         end do

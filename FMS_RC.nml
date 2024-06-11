@@ -1,6 +1,6 @@
 &FMS_RC_nml
 
-sw_scheme = 'sw_SH4'
+sw_scheme = 'sw_SDA'
 lw_scheme = 'lw_VIM'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
