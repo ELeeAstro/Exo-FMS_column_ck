@@ -125,10 +125,11 @@ contains
 
     real(dp), dimension(4*nlev) :: flux_temp
     real(dp) :: flux_bot, f0
+    real(dp), parameter :: eps_20 = 1.0e-20_dp
 
 
     real(dp), dimension(nlay) :: sigma_sq, pmom2, fc, c
-    real(dp), dimension(nlay) :: w0, g0
+    real(dp), dimension(nlay) :: w0, hg
     integer :: info
     integer, dimension(4*nlay) :: ipiv
 
@@ -162,10 +163,9 @@ contains
 
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
     !! Assume HG phase function for scaling (g**nstream)
-    fc(:) = g_in(:)**(nstr)
-    pmom2(:) = g_in(:)**(nstr+1)
-
-    where (fc(:) /=  pmom2(:))
+    where (g_in(:) >= 1e-6_dp)
+      fc(:) = g_in(:)**(nstr)
+      pmom2(:) = g_in(:)**(nstr+1)
       sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
       & ( log(fc(:)**2/pmom2(:)**2) )
       c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
@@ -179,11 +179,11 @@ contains
       fc(:) = 0.0_dp
     end where
 
-    g0(:) = g_in(:)
+    hg(:) = g_in(:)
     mu_z = mu_in(nlev) ! Can't do spherical geometry yet
 
     !! Reform edge optical depths
-    tau_e(1) = tau_in(1)
+    tau_e(1) = 0.0_dp
     do k = 1, nlay
       tau_e(k+1) = tau_e(k) + dtau(k)
     end do
@@ -192,23 +192,23 @@ contains
 
     Pu0(1) = 1.0_dp
     Pu0(2) = -mu_z
-    Pu0(3) = (3.0_dp * -(mu_z)**2 - 1.0_dp)/2.0_dp
-    Pu0(4) = (5.0_dp * -(mu_z)**3 - 3.0_dp * -(mu_z))/2.0_dp
+    Pu0(3) = (3.0_dp * mu_z**2 - 1.0_dp)/2.0_dp
+    Pu0(4) = (5.0_dp * -mu_z**3 - 3.0_dp * -(mu_z))/2.0_dp
 
     w_multi(1,:) = 1.0_dp
-    w_multi(2,:) = 3.0_dp * (g0(:) - fc(:)) / (1.0_dp - fc(:))
-    w_multi(3,:) = 5.0_dp * (g0(:)**2 - fc(:)) / (1.0_dp - fc(:))
-    w_multi(4,:) = 7.0_dp * (g0(:)**3 - fc(:)) / (1.0_dp - fc(:))
+    w_multi(2,:) = 3.0_dp * (hg(:) - fc(:)) / (1.0_dp - fc(:))
+    w_multi(3,:) = 5.0_dp * (hg(:)**2 - fc(:)) / (1.0_dp - fc(:))
+    w_multi(4,:) = 7.0_dp * (hg(:)**3 - fc(:)) / (1.0_dp - fc(:))
 
     do l = 1, nstr
-      a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:)
-      bb(l,:) = ((w0(:) * w_multi(l,:)) * F0_in * Pu0(l)) / (fourpi)
+      a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:) + eps_20
+      bb(l,:) = ((w0(:) * w_multi(l,:)) * 1.0_dp * Pu0(l)) / (fourpi)
     end do
 
     surf_reflect = 0.0_dp
 
-    b_surface = 0.0_dp + surf_reflect*mu_z*F0_in*exp(-tau_e(nlev)/mu_z)
-    b_surface_SH4 = -(0.0_dp + surf_reflect*mu_z*F0_in*exp(-tau_e(nlev)/mu_z))/4.0_dp
+    b_surface = 0.0_dp + surf_reflect*mu_z*1.0_dp*exp(-tau_e(nlev)/mu_z)
+    b_surface_SH4 = -(0.0_dp + surf_reflect*mu_z*1.0_dp*exp(-tau_e(nlev)/mu_z))/4.0_dp
 
     b_top = 0.0_dp
 
@@ -445,8 +445,8 @@ contains
     flux_bot = sum(F_bot(:)*B(:)) + G_bot
 
     do i = 1, nlev
-      flx_down(i) = max(flux_temp(i*4 - 3),0.0_dp) + mu_z * F0_in * expon(i)
-      flx_up(i) = max(flux_temp(i*4 - 1), 0.0_dp)
+      flx_down(i) = max(flux_temp(i*4 - 3),0.0_dp)*F0_in + mu_z * F0_in * expon(i)
+      flx_up(i) = max(flux_temp(i*4 - 1), 0.0_dp)*F0_in
     end do
 
   end subroutine sw_SH_four_stream

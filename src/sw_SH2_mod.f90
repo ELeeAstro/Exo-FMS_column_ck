@@ -127,6 +127,9 @@ contains
     integer :: info
     integer, dimension(2*nlay) :: ipiv
 
+    integer :: nn(2*nlay)
+    integer :: indcs(nlay)
+
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
 
@@ -157,26 +160,23 @@ contains
 
     !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
     !! Assume HG phase function for scaling (g**nstream)
-    ! where (g_in(:) >= 1e-6_dp)
-    !   fc(:) = g_in(:)**(nstr)
-    !   pmom2(:) = g_in(:)**(nstr+1)
-    !   sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
-    !   & ( log(fc(:)**2/pmom2(:)**2) )
-    !   c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
-    !   fc(:) = c(:)*fc(:)
+    where (g_in(:) >= 1e-6_dp)
+      fc(:) = g_in(:)**(nstr)
+      pmom2(:) = g_in(:)**(nstr+1)
+      sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
+      & ( log(fc(:)**2/pmom2(:)**2) )
+      c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
+      fc(:) = c(:)*fc(:)
 
-    !   w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
-    !   dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
+      w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
+      dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
 
-    ! elsewhere
-    !   w0(:) = w_in(:)
-    !   fc(:) = 0.0_dp
-    ! end where
-
-    fc(:) = 0.0_dp
+    elsewhere
+      w0(:) = w_in(:)
+      fc(:) = 0.0_dp
+    end where
 
     hg(:) = g_in(:)
-    w0(:) = w_in(:) 
 
     mu_z = mu_in(nlev) ! Can't do spherical geometry yet
 
@@ -186,8 +186,6 @@ contains
       tau_e(k+1) = tau_e(k) + dtau(k)
     end do
 
-    dir(:) = F0_in * mu_z * exp(-tau_e(:)/mu_z)
-
     Pu0(1) = 1.0_dp
     Pu0(2) = -mu_z
 
@@ -196,7 +194,7 @@ contains
 
     do l = 1, nstr
       a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:) + eps_20
-      bb(l,:) = ((w0(:) * w_multi(l,:)) * 1.0_dp * Pu0(l)) / (4.0_dp*pi)
+      bb(l,:) = ((w0(:) * w_multi(l,:)) * 1.0_dp * Pu0(l)) / (fourpi)
     end do
 
     surf_reflect = 0.0_dp
@@ -209,7 +207,7 @@ contains
     expo(:) = min(lam(:)*dtau(:),35.0_dp)
     exptrm(:) = exp(-expo(:))
 
-    del(:) = ((1.0_dp / mu_z)**2 - a(1,:)*a(2,:))
+    del(:) = ((1.0_dp / mu_z**2) - a(1,:)*a(2,:))
     eta(1,:) = (bb(2,:)/mu_z - a(2,:)*bb(1,:)) / del(:)
     eta(2,:) = (bb(1,:)/mu_z - a(1,:)*bb(2,:)) / del(:)
 
@@ -282,14 +280,15 @@ contains
     F(1, 2) = Q2(1)
     F(2, 1) = Q2(1)
     F(2, 2) = Q1(1)
-
-    k = 0
-    do i = 1, 2*nlay, 2
-      F(i + 2, i) = Q1mn(k + 1)
-      F(i + 2, i + 1) = Q2pl(k + 1)
-      F(i + 3, i) = Q2mn(k + 1)
-      F(i + 3, i + 1) = Q1pl(k + 1)
-      k = k + 1
+    
+    ! Main loop
+    k = 1
+    do i = 1, nlay*2, 2
+        F(i+2, i) = Q1mn(k)
+        F(i+2, i+1) = Q2pl(k)
+        F(i+3, i) = Q2mn(k)
+        F(i+3, i+1) = Q1pl(k)
+        k = k + 1
     end do
 
     G(1) = zmn_down(1)
@@ -307,12 +306,9 @@ contains
     flux_bot = sum(F_bot(:)*X(:)) + G_bot
 
     do i = 1, nlev
-      flx_down(i) = flux_temp(i*2-1)*F0_in 
-      flx_up(i) = flux_temp(i*2)*F0_in
+      flx_down(i) = max(flux_temp(i*2-1),0.0_dp)*F0_in + mu_z * F0_in * expon(i) 
+      flx_up(i) = max(flux_temp(i*2),0.0_dp)*F0_in
     end do
-
-    ! Add direct beam
-    flx_down(:) = flx_down(:) + dir(:)
 
   end subroutine sw_SH_two_stream
 
