@@ -20,6 +20,7 @@ program Exo_FMS_RC
   use sw_SH2_mod, only : sw_SH2
   use sw_SH4_mod, only : sw_SH4
   use sw_disort_ts_mod, only : sw_disort_ts
+  !use sw_disort_mod, only : sw_disort
 
   use lw_AA_E_mod, only : lw_AA_E
   use lw_AA_L_mod, only : lw_AA_L
@@ -27,6 +28,7 @@ program Exo_FMS_RC
   use lw_VIM_mod, only : lw_VIM
   use lw_Toon_mod, only : lw_Toon
   use lw_disort_ts_mod, only : lw_disort_ts
+  !use lw_disort_mod, only : lw_disort
 
   use ce_interp_mod, only : interp_ce_table
   use ce_Burrows_mod, only : analytic_Burrows
@@ -339,6 +341,9 @@ program Exo_FMS_RC
     case('sw_disort_ts')
       ! Two stream disort method with multiple scattering
       call sw_disort_ts(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
+    !case('sw_disort')
+      ! n-stream disort method with multiple scattering (benchmark method)
+      !call sw_disort(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
     case('none')
     case default
       print*, 'Invalid sw_scheme: ', trim(sw_scheme)
@@ -364,7 +369,10 @@ program Exo_FMS_RC
       call lw_Toon(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_disort_ts')
       ! Two stream disort method with multiple scattering
-      call lw_disort_ts(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
+      call lw_disort_ts(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    !case('lw_disort')
+      ! n-stream disort method with multiple scattering (benchmark method)
+      !call lw_disort(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
     case('none')
     case default
       print*, 'Invalid lw_scheme: ', trim(lw_scheme)

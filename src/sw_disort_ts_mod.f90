@@ -39,12 +39,12 @@ contains
     integer, parameter :: maxcly=200, maxulv=201
     real(dp), dimension(0:maxcly) :: Te_0
     real(dp) :: wvnmlo, wvnmhi
-    real(dp), dimension(maxcly) :: dtauc, utau
+    real(dp), dimension(maxcly) :: dtauc
     real(dp), dimension(maxcly) :: ggg, ssalb
-    real(dp), dimension(maxulv) :: sw_net_d
-    real(dp), dimension(nb,maxulv) :: sw_net_b
-    real(dp), dimension(ng,maxulv) :: sw_net_g
-    real(dp) :: umu0, fbeam, olr_g, Tint
+    real(dp), dimension(maxulv) :: sw_net_d, sw_up_d, sw_down_d, utau
+    real(dp), dimension(nb,maxulv) :: sw_net_b, sw_up_b, sw_down_b
+    real(dp), dimension(ng,maxulv) :: sw_net_g, sw_up_g, sw_down_g
+    real(dp) :: umu0, fbeam, Tint
     logical :: planck
 
     !! Shortwave flux calculation
@@ -52,6 +52,8 @@ contains
       planck = .False.
       umu0 =  mu_z(nlev)
       sw_net_d(:) = 0.0_dp
+      sw_up_d(:) = 0.0_dp
+      sw_down_d(:) = 0.0_dp
       !! Initalise arrays
       ggg(:) = 0.0_dp
       ssalb(:) = 0.0_dp
@@ -63,6 +65,8 @@ contains
           cycle
         end if
         sw_net_b(b,:) = 0.0_dp
+        sw_up_b(b,:) = 0.0_dp
+        sw_down_b(b,:) = 0.0_dp
         fbeam = Finc(b)
         wvnmlo = 0.0_dp
         wvnmhi = 0.0_dp
@@ -74,24 +78,28 @@ contains
           do i = 1, nlay
             dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
           end do
-          call CALL_TWOSTR (nlay,Te_0,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,sw_net_g(g,:),olr_g)
+          call call_twostr(nlay,Te_0,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
+            & sw_net_g(g,:),sw_up_g(g,:),sw_down_g(g,:))
           sw_net_b(b,:) = sw_net_b(b,:) + sw_net_g(g,:) * gw(g)
+          sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
+          sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
         end do
         sw_net_d(:) = sw_net_d(:) + sw_net_b(b,:)
+        sw_up_d(:) = sw_up_d(:) + sw_up_b(b,:)
+        sw_down_d(:) = sw_down_d(:) + sw_down_b(b,:)
       end do
     else
       sw_net_d(:) = 0.0_dp
+      sw_up_d(:) = 0.0_dp
+      sw_down_d(:) = 0.0_dp
     end if
 
     sw_net(:) = sw_net_d(1:nlev)
-    sw_up(:) = 0.0_dp
-    sw_down(:) = 0.0_dp
-
-    !! Net sw flux
-    !sw_net(:) = sw_up(:) - sw_down(:)
+    sw_up(:) = sw_up_d(1:nlev)
+    sw_down(:) = sw_down_d(1:nlev)
 
     !! Absorbed Stellar Radiation (ASR)
-    asr = 0.0_dp !sw_down(1) - sw_up(1)
+    asr = sw_down(1) - sw_up(1)
 
   end subroutine sw_disort_ts
 

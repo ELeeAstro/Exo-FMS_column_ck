@@ -45,12 +45,12 @@ contains
     integer, parameter :: maxcly=200, maxulv=201
     real(dp), dimension(0:maxcly) :: Te_0
     real(dp) :: wvnmlo, wvnmhi
-    real(dp), dimension(maxcly) :: dtauc, utau
+    real(dp), dimension(maxcly) :: dtauc
     real(dp), dimension(maxcly) :: ggg, ssalb
-    real(dp), dimension(maxulv) :: lw_net_d
-    real(dp), dimension(nb,maxulv) :: lw_net_b
-    real(dp), dimension(ng,maxulv) :: lw_net_g
-    real(dp) :: umu0, fbeam, olr_g
+    real(dp), dimension(maxulv) :: lw_net_d, lw_up_d, lw_down_d, utau
+    real(dp), dimension(nb,maxulv) :: lw_net_b, lw_up_b, lw_down_b
+    real(dp), dimension(ng,maxulv) :: lw_net_g, lw_up_g, lw_down_g
+    real(dp) :: umu0, fbeam
     logical :: planck
 
 
@@ -69,13 +69,16 @@ contains
     fbeam = 0.0_dp
     umu0 = 0.0_dp
     lw_net_d(:) = 0.0_dp
-    olr = 0.0_dp
+    lw_up_d(:) = 0.0_dp
+    lw_down_d(:) = 0.0_dp
     ggg(:) = 0.0_dp
     ssalb(:) = 0.0_dp
     utau(:) = 0.0_dp
     dtauc(:) = 0.0_dp
     do b = 1, nb
       lw_net_b(b,:) = 0.0_dp
+      lw_up_b(b,:) = 0.0_dp
+      lw_down_b(b,:) = 0.0_dp
       wvnmlo = wn_e(b+1)
       wvnmhi = wn_e(b)
       do g = 1, ng
@@ -85,16 +88,23 @@ contains
         do i = 1, nlay
           dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
         end do
-        call CALL_TWOSTR (nlay,Te,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,lw_net_g(g,:),olr_g)
+        call call_twostr(nlay,Te,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
+          &  lw_net_g(g,:),lw_up_g(g,:),lw_down_g(g,:))
         lw_net_b(b,:) = lw_net_b(b,:) + lw_net_g(g,:) * gw(g)
-        olr = olr + olr_g * gw(g)
+        lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
+        lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
       end do
       lw_net_d(:) = lw_net_d(:) + lw_net_b(b,:)
+      lw_up_d(:) = lw_up_d(:) + lw_up_b(b,:)
+      lw_down_d(:) = lw_down_d(:) + lw_down_b(b,:)
     end do
 
     lw_net(:) = lw_net_d(1:nlev)
-    lw_up(:) = 0.0_dp
-    lw_down(:) = 0.0_dp
+    lw_up(:) = lw_up_d(1:nlev)
+    lw_down(:) = lw_down_d(1:nlev)
+
+    !! Outgoing Longwave Radiation (olr)
+    olr = lw_up(1)
 
   end subroutine lw_disort_ts
 

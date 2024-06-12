@@ -56,10 +56,15 @@ OBJECTS = \
 		lw_disort_ts_mod.o \
     FMS_RC.o
 
+#		DISORT.o \
+# 	sw_disort_mod.o \
+#		lw_disort_mod.o \
+
+
 # executable statement
 EXECS  = ../FMS_RC
 
-.SUFFIXES: .o .f90 .F
+.SUFFIXES: .o .f90 .F .f
 
 default: FMS_RC
 
@@ -74,3 +79,6 @@ clean:
 
 .F.o:
 	$(F90) $(FFLAGS) $(DEFS) -c $<
+
+.f.o:
+	$(F90) $(FFLAGS) $(DEFS) -c $<	
