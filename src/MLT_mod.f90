@@ -52,11 +52,11 @@ contains
       end if
 
       !! Use WENO4 method to (smoothly) interpolate layers to levels
-      Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
+      Te(:) = interpolate_weno4(pe, pl, Tl_c, .False.)
 
       !! Edges are linearly interpolated to avoid overshoot
-      Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-      Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+      Te(1) = 10.0_dp**(log10(Tl_c(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl_c(1)/Te(2)))
+      Te(nlev) = 10.0_dp**(log10(Tl_c(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl_c(nlay)/Te(nlay)))
 
 
       !! Calculate the regions that are convectivly unstable
