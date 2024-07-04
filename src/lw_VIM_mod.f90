@@ -29,16 +29,29 @@ module lw_VIM_mod
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
   !! make sure to make clean and recompile if you change these
+  !! For HJ's we actually care about stratospheric heating rates, so Gauss–Laguerre quadrature is generally best for 4+ stream, 
+  !! even for cloudy regions (Hogan 2024).
   
   !! Optimised quadrature for 1 node (Hogan 2024)
   ! integer, parameter :: nmu = 1
   ! real(dp), dimension(nmu), parameter :: uarr = (/0.6096748751_dp/)
   ! real(dp), dimension(nmu), parameter :: w = (/1.0_dp/)
 
-  !! Gauss–Jacobi-5 quadrature for 2 nodes (Hogan 2024)
+  !! Gauss–Laguerre quadrature for 2 nodes (Hogan 2024)
   integer, parameter :: nmu = 2
-  real(dp), dimension(nmu), parameter :: uarr = (/0.2509907356_dp, 0.7908473988_dp/)
-  real(dp), dimension(nmu), parameter :: w = (/0.2300253764_dp, 0.7699746236_dp/)
+  real(dp), dimension(nmu), parameter :: uarr = (/0.1813898346_dp, 0.7461018061_dp/)
+  real(dp), dimension(nmu), parameter :: w = (/0.1464466094_dp, 0.8535533906_dp/)
+
+  !! Gauss–Laguerre quadrature for 3 nodes (Hogan 2024)
+  ! integer, parameter :: nmu = 3
+  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0430681066_dp, 0.3175435896_dp, 0.8122985952_dp/)
+  ! real(dp), dimension(nmu), parameter :: w = (/0.0103892565_dp, 0.2785177336_dp, 0.7110930099_dp/)
+
+  !! Gauss–Laguerre quadrature for 4 nodes (Hogan 2024)
+  ! integer, parameter :: nmu = 4
+  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0091177205_dp, 0.1034869099_dp, 0.4177464746_dp, 0.8510589811_dp/)
+  ! real(dp), dimension(nmu), parameter :: w = (/0.0005392947_dp, 0.0388879085_dp, 0.3574186924_dp, 0.6031541043_dp /)
+
 
   private :: lw_VIM_fs, BB_integrate
   public :: lw_VIM
