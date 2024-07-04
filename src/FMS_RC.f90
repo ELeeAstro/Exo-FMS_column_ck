@@ -31,7 +31,7 @@ program Exo_FMS_RC
   use lw_disort_ts_mod, only : lw_disort_ts
   !use lw_disort_mod, only : lw_disort
   !use lw_Feautrier_mod, only : lw_Feautrier
-  use lw_AD_mod, only : lw_AD
+  !use lw_AD_mod, only : lw_AD
 
   use ce_interp_mod, only : interp_ce_table
   use ce_Burrows_mod, only : analytic_Burrows
@@ -384,7 +384,7 @@ program Exo_FMS_RC
       !call lw_Feautier(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
     case('lw_AD')
       ! Adding-doubling method
-      call lw_AD(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
+      !call lw_AD(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
     case('none')
     case default
       print*, 'Invalid lw_scheme: ', trim(lw_scheme)

@@ -1,7 +1,7 @@
 &FMS_RC_nml
 
-sw_scheme = 'sw_disort_ts'
-lw_scheme = 'lw_disort_ts'
+sw_scheme = 'sw_direct'
+lw_scheme = 'lw_AA_L'
 opac_scheme = 'ck'
 adj_scheme = 'Ray_dry'
 CE_scheme = 'interp'
