@@ -1,0 +1,93 @@
+&FMS_RC_nml
+
+sw_scheme = 'sw_SDA'
+lw_scheme = 'lw_VIM_E'
+opac_scheme = 'ck'
+adj_scheme = 'Ray_dry'
+CE_scheme = 'Burrows'
+
+nb = 11
+wl_sh = 'opac_data/wavelengths_GCM_11.txt'
+stellarf_sh = 'sw_flux/sw_band_flux_HD189_11.txt'
+
+Rs = 0.805 
+sm_ax = 0.031
+
+n_ck = 4
+ng = 8
+nsp = 7
+n_cia = 2
+n_ray = 2
+
+nlay = 54
+a_sh = 'hybrid_sigma/Hybrid_sigma_grid_a_54.txt'
+b_sh = 'hybrid_sigma/Hybrid_sigma_grid_b_54.txt'
+
+pref = 1.0e8
+
+t_step = 30.0
+nstep = 20000
+Rd_air = 3573.0
+cp_air = 12698.0
+grav = 21.78
+mu_z = 0.577
+Tirr = 1200.0
+Tint = 381.0
+
+k_V = 6e-4
+k_IR = 1e-3
+fl = 1.0
+met = 0.0
+
+zcorr = .False.
+zcorr_meth = 1
+radius = 7.1492e7
+
+iIC = 4
+corr = .True.
+table_num = 1
+
+/
+
+&sp_nml
+
+sp_list = 'H2', 'He', 'H2O', 'CH4', 'CO', 'N2', 'NH3'
+VMR_tab_sh = ''
+
+/
+
+&gw_nml
+
+gw = 0.1652310514402905, 0.30976894855970943, 0.30976894855970943, 0.1652310514402905, 0.00869637112843635, 0.01630362887156367, 0.01630362887156367, 0.00869637112843635
+
+/
+
+&ck_nml
+
+PM = .False.
+RORR = .False.
+AEE = .False.
+EE = .True.
+EE_lw = 'twoside'
+ck_interp = 2
+ck_form = 2, 2, 2, 2
+ck_sp = 'H2O', 'CH4', 'CO', 'NH3' 
+ck_paths = 'opac_data/ck/H2O_g8_11.txt', 'opac_data/ck/CH4_g8_11.txt', 'opac_data/ck/CO_g8_11.txt', 'opac_data/ck/NH3_g8_11.txt'
+
+/
+
+&cia_nml
+
+cia_form = 3, 3
+cia_sp = 'H2-H2', 'H2-He'
+cia_paths = 'opac_data/cia/H2-H2_reform_11.txt', 'opac_data/cia/H2-He_reform_11.txt'
+
+/
+
+&ray_nml
+
+ray_form = 1, 1
+ray_sp = 'H2', 'He'
+ray_paths = 'opac_data/ray/Ray_H2_11.txt', 'opac_data/ray/Ray_He_11.txt'
+
+/

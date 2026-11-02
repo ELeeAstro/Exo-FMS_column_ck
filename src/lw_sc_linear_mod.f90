@@ -2,16 +2,20 @@
 ! Elspeth KH Lee - May 2021 : Initial version
 !                - Oct 2021 : adding method & Bezier interpolation
 !                - Aug 2023 : Change quadrature following Li (2000)
-!                - Jun 2024 : Change quadrature following Hogan (2004)
-! lw: Two-stream method following the short characteristics method (e.g. Helios-r2: Kitzmann et al. 2018)
-!     Uses the method of short characteristics (Olson & Kunasz 1987) with linear interpolants.
+!                - Jun 2024 : Change quadrature following Hogan (2024)
+!                - Nov 2026 : Cleaned up, Taylor expansions for thin layers
+! lw: Short characteristics method (e.g. Helios-r2: Kitzmann et al. 2018) with linear interpolants
+!     (Olson & Kunasz 1987), with the Extended Absorption Approximation (EAA, Li 2002) for scattering
 !     Pros: Very fast, accurate at high optical depths, very stable
-!     Cons: No lw scattering (but could combine with AA if needed)
+!     Cons: Not technically multiple scattering (can be quite innacurate at even moderate albedo)
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!
 !!!
 
 module lw_sc_linear_mod
   use, intrinsic :: iso_fortran_env
-  use WENO4_mod, only : interpolate_weno4  
+  use WENO4_mod, only : interpolate_weno4
+  use BB_integrate_mod, only : BB_integrate
   implicit none
 
   !! Precision variables
@@ -19,49 +23,39 @@ module lw_sc_linear_mod
 
   !! Required constants
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
-  real(dp), parameter :: twopi = 2.0_dp * pi
   real(dp), parameter :: sb = 5.670374419e-8_dp
-  real(dp), parameter :: hp = 6.62607015e-34_dp
-  real(dp), parameter :: kb = 1.380649e-23_dp
-  real(dp), parameter :: c_s = 2.99792458e8_dp
-  real(dp), parameter :: c1 = (hp * c_s) / kb
-  real(dp), parameter :: c2 = c_s**2
-  real(dp), parameter :: n2 = 2.0_dp * hp * c2
 
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
-  !! make sure to make clean and recompile if you change these
-  !! For HJ's we actually care about stratospheric heating rates, so Gauss–Laguerre quadrature is generally best for 4+ stream, 
-  !! even for cloudy regions (Hogan 2024).
-  
-  !! Optimised quadrature for 1 node (Hogan 2024)
+  !! make sure to make clean and recompile if you change these.
+
+  !! Optimised quadrature for 1 node - 2 stream (Hogan 2024)
   ! integer, parameter :: nmu = 1
   ! real(dp), dimension(nmu), parameter :: uarr = (/0.6096748751_dp/)
   ! real(dp), dimension(nmu), parameter :: w = (/1.0_dp/)
 
-  !! Gauss–Laguerre quadrature for 2 nodes (Hogan 2024)
-  integer, parameter :: nmu = 2
-  real(dp), dimension(nmu), parameter :: uarr = (/0.1813898346_dp, 0.7461018061_dp/)
-  real(dp), dimension(nmu), parameter :: w = (/0.1464466094_dp, 0.8535533906_dp/)
+  !! Gauss–Jacobi-5 quadrature for 2 nodes - 4 stream (Hogan 2024)
+  !integer, parameter :: nmu = 2
+  !real(dp), dimension(nmu), parameter :: uarr = (/0.2509907356_dp, 0.7908473981_dp/)
+  !real(dp), dimension(nmu), parameter :: w = (/0.2300253764_dp, 0.7699746236_dp/)
 
-  !! Gauss–Laguerre quadrature for 3 nodes (Hogan 2024)
+  !! Gauss–Jacobi-5 quadrature for 3 nodes - 6 stream (Hogan 2024)
   ! integer, parameter :: nmu = 3
-  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0430681066_dp, 0.3175435896_dp, 0.8122985952_dp/)
-  ! real(dp), dimension(nmu), parameter :: w = (/0.0103892565_dp, 0.2785177336_dp, 0.7110930099_dp/)
+  ! real(dp), dimension(nmu), parameter :: uarr = (/0.1024922169_dp, 0.4417960320_dp, 0.8633751621_dp/)
+  ! real(dp), dimension(nmu), parameter :: w = (/0.0437820218_dp, 0.3875796738_dp, 0.5686383044_dp/)
 
-  !! Gauss–Laguerre quadrature for 4 nodes (Hogan 2024)
-  ! integer, parameter :: nmu = 4
-  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0091177205_dp, 0.1034869099_dp, 0.4177464746_dp, 0.8510589811_dp/)
-  ! real(dp), dimension(nmu), parameter :: w = (/0.0005392947_dp, 0.0388879085_dp, 0.3574186924_dp, 0.6031541043_dp /)
+  !! Gauss–Jacobi-5 quadrature for 4 nodes - 8 stream (Hogan 2024)
+  integer, parameter :: nmu = 4
+  real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
+  real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
 
-
-  private :: lw_shortchar_linear, BB_integrate
+  private :: lw_shortchar_linear
   public :: lw_sc_linear
 
 contains
 
 
-  subroutine lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
+  subroutine lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     implicit none
 
     !! Input variables
@@ -71,6 +65,7 @@ contains
     real(dp), dimension(nlay), intent(in) :: Tl, pl
     real(dp), dimension(nlev), intent(in) :: pe
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
+    real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
     real(dp), intent(in) :: Tint
 
     !! Output variables
@@ -82,35 +77,33 @@ contains
     real(dp), dimension(nlev) :: Te
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
-    real(dp), dimension(nb,nlev) :: lw_down_b, lw_up_b
-    real(dp), dimension(ng,nlev) :: lw_down_g, lw_up_g
+    real(dp), dimension(nlev) :: lw_up_g, lw_down_g
 
-    !! Use WENO4 method to (smoothly) interpolate layers to levels
-    Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
+    !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
+    Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
 
-    !! Edges are linearly interpolated to avoid overshoot
-    Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-    Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+    !! Edges are linearly extrapolated in log(p)-log(T) space.
+    Te(1) = 10.0_dp**(log10(Te(2)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * &
+      & log10(Tl(1)/Te(2)))
+    Te(nlev) = 10.0_dp**(log10(Te(nlay)) + (log10(pe(nlev)/pe(nlay))/ &
+      & log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
 
     !! Find integrated planck function for each band for each level
     do k = 1, nlev
-      call BB_integrate(nb, Te(k), wn_e, be(:,k))   ! Integrated planck function intensity at levels for each band
+      call BB_integrate(nb, Te(k), wn_e, be(:,k))
     end do
     call BB_integrate(nb, Tint, wn_e, be_int) ! Integrated planck function intensity for internal temperature
 
-    !! Longwave flux calculation
+    !! Longwave flux calculation - sum over each band and g-ordinance
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
-      lw_up_b(b,:) = 0.0_dp
-      lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_shortchar_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), lw_up_g(g,:), lw_down_g(g,:))
-        lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
-        lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
+        call lw_shortchar_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
+          & lw_up_g(:), lw_down_g(:))
+        lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
+        lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
-      lw_up(:) = lw_up(:) + lw_up_b(b,:)
-      lw_down(:) = lw_down(:) + lw_down_b(b,:)
     end do
 
     !! Net lw fluxes at each level
@@ -121,26 +114,33 @@ contains
 
   end subroutine lw_sc_linear
 
-  subroutine lw_shortchar_linear(nlay, nlev, be, be_int, tau_in, flx_up, flx_down)
+  subroutine lw_shortchar_linear(nlay, nlev, be, be_int, tau_in, w_in, g_in, flx_up, flx_down)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
     real(dp), dimension(nlev), intent(in) :: be, tau_in
+    real(dp), dimension(nlay), intent(in) :: w_in, g_in
     real(dp), intent(in) :: be_int
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
-    !! Work variables and arrays
+    !! Work variables
     integer :: k, m
-    real(dp), dimension(nlay) :: dtau, edel
-    real(dp), dimension(nlay) :: del, e0i, e1i, e1i_del
-    real(dp), dimension(nlay) :: Am, Bm, Gp, Bp
+    real(dp), dimension(nlay) :: dtau, eps, dtau_a
+    real(dp), dimension(nlay) :: del, edel, e0i, Am, Bm
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), parameter :: small_tau = 1.0e-3_dp
 
-    !! Calculate dtau in each layer
-    dtau(:) = tau_in(2:) - tau_in(1:nlay)
+    dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
+
+    !! EAA modified co-albedo.  No delta scaling is needed because this
+    !! transport combination is invariant under a consistent delta transform.
+    eps(:) = sqrt((1.0_dp - w_in(:))*(1.0_dp - g_in(:)*w_in(:)))
+
+    !! Absorption/modified optical depth for transmission function
+    dtau_a(:) = eps(:)*dtau(:)
 
     ! Zero the total flux arrays
     flx_up(:) = 0.0_dp
@@ -149,43 +149,34 @@ contains
     !! Start loops to integrate in mu space
     do m = 1, nmu
 
-      del(:) = dtau(:)/uarr(m)
-      edel(:) = exp(-del(:))
-      e0i(:) = 1.0_dp - edel(:)
-
-      !! Prepare loop
-      ! Olson & Kunasz (1987) linear interpolant parameters
-      where (edel(:) > 0.999_dp)
-        ! If we are in very low optical depth regime, then use an isothermal approximation
-        Am(:) = (0.5_dp*(be(2:) + be(1:nlay)) * e0i(:))/be(1:nlay)
-        Bm(:) = 0.0_dp
-        Gp(:) = 0.0_dp
-        Bp(:) = Am(:)
+      !! Olson & Kunasz (1987) linear interpolant coefficients: the source at the near level
+      !! (Am) and at the far level (Bm) of each layer along the characteristic.
+      !! Use their Taylor expansions at small slant absorption optical thickness.
+      del(:) = dtau_a(:)/uarr(m)
+      where (del(:) < small_tau)
+        Bm(:) = del(:)*(0.5_dp + del(:)*(-1.0_dp/6.0_dp + del(:)/24.0_dp))
+        Am(:) = del(:)*(0.5_dp + del(:)*(-1.0_dp/3.0_dp + del(:)/8.0_dp))
+        edel(:) = 1.0_dp - Am(:) - Bm(:)
       elsewhere
-        ! Use linear interpolants
-        e1i(:) = del(:) - e0i(:)
-        e1i_del(:) = e1i(:)/del(:) ! The equivalent to the linear in tau term
-
-        Am(:) = e0i(:) - e1i_del(:) ! Am(k) = Gp(k), just indexed differently
-        Bm(:) = e1i_del(:) ! Bm(k) = Bp(k), just indexed differently
-        Gp(:) = Am(:)
-        Bp(:) = Bm(:)
+        edel(:) = exp(-del(:))
+        e0i(:) = 1.0_dp - edel(:)
+        Bm(:) = (del(:) - e0i(:))/del(:)
+        Am(:) = e0i(:) - Bm(:)
       end where
 
-      !! Begin two-stream loops
+      !! Begin short characteristic sweeps
       !! Perform downward loop first
-      ! Top boundary condition - 0 flux downward from top boundary
+      ! Top boundary condition - no downward intensity at the top
       lw_down_g(1) = 0.0_dp
       do k = 1, nlay
-        lw_down_g(k+1) = lw_down_g(k)*edel(k) + Am(k)*be(k) + Bm(k)*be(k+1) ! TS intensity
+        lw_down_g(k+1) = lw_down_g(k)*edel(k) + Am(k)*be(k) + Bm(k)*be(k+1)
       end do
 
       !! Perform upward loop
-      ! Lower boundary condition - internal heat definition Fint = F_down - F_up
-      ! here we use the same condition but use intensity units to be consistent
+      ! Lower boundary condition - internal heat definition Fint = F_up - F_down
       lw_up_g(nlev) = lw_down_g(nlev) + be_int
       do k = nlay, 1, -1
-        lw_up_g(k) = lw_up_g(k+1)*edel(k) + Bp(k)*be(k) + Gp(k)*be(k+1) ! TS intensity
+        lw_up_g(k) = lw_up_g(k+1)*edel(k) + Bm(k)*be(k) + Am(k)*be(k+1)
       end do
 
       !! Sum up flux arrays with Gaussian quadrature weights and points for this mu stream
@@ -194,60 +185,10 @@ contains
 
     end do
 
-    !! The flux is the intensity * pi
+    !! The flux is the integrated intensity * pi (in this GJ weighting scheme)
     flx_down(:) = pi * flx_down(:)
     flx_up(:) = pi * flx_up(:)
 
   end subroutine lw_shortchar_linear
-
-  subroutine BB_integrate(n_b, Te, wn_e, be)
-    implicit none
-
-    integer, intent(in) :: n_b
-    real(dp), intent(in) :: Te
-    real(dp), dimension(n_b+1), intent(in) :: wn_e
-
-    real(dp), dimension(n_b), intent(out) :: be
-
-    integer :: ww, j, intitera
-    real(dp), dimension(n_b+1) :: iB
-    real(dp) :: x, x2, x3, itera, summ, dn
-
-    !! Code for integrating the blckbody function between two wavenumbers
-    !! This is a method that uses a sum convergence
-    !! Taken from: spectralcalc.com/blackbody/inband_radiance.html
-
-      if (Te < 1e-6_dp) then
-        be(:) = 0.0_dp
-        return
-      end if
-
-      do ww = 1, n_b+1
-
-        x = c1 * 100.0_dp * wn_e(ww)/ Te
-        x2 = x**2
-        x3 = x**3
-
-        itera = 2.0_dp + 20.0_dp/x
-        if (itera > 150) then
-          itera = 150
-        end if
-        intitera = int(itera)
-
-        summ = 0.0_dp
-        do j = 1, intitera + 1
-          dn = 1.0_dp/real(j,kind=dp)
-          summ = summ +  exp(-min(real(j,kind=dp)*x,300.0_dp))* &
-          & (x3 + (3.0_dp * x2 + 6.0_dp*(x+dn)*dn)*dn)*dn
-        end do
-
-        iB(ww) = n2 * (Te/c1)**(4) * summ
-      end do
-
-      do ww = 1, n_b
-        be(ww) = max(iB(ww+1) - iB(ww),0.0_dp)
-      end do
-
-  end subroutine BB_integrate
 
 end module lw_sc_linear_mod

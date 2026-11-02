@@ -24,7 +24,8 @@
 !     |* the TWOSTR code, available online:
 !     |* ftp://climate1.gsfc.nasa.gov/wiscombe/Multiple_Scatt/TWOSTR/
 
-      SUBROUTINE CALL_TWOSTR(nlyr,temper,gg,ssalb,dtauc,ntau,utau,
+      SUBROUTINE CALL_TWOSTR(nlyr,albedo_in,temper,gg,ssalb,dtauc,
+     $     ntau,utau,
      $     planck,wvnmlo,wvnmhi,Tint,fbeam,umu0,flnet,flup,fldown)
 
       IMPLICIT NONE
@@ -38,7 +39,7 @@
       INTEGER nlyr,ntau
       REAL*8 temper(0:maxcly),utau(maxulv)
       REAL*8 gg(maxcly),ssalb(maxcly),dtauc(maxcly)
-      REAL*8 fbeam,umu0,Tint,wvnmlo,wvnmhi
+      REAL*8 fbeam,umu0,Tint,wvnmlo,wvnmhi,albedo_in
 !     ------------------ OUTPUT VARIABLES ----------------
       REAL*8 flnet(maxulv), flup(maxulv), fldown(maxulv)
 
@@ -48,7 +49,7 @@
       LOGICAL :: deltam = .true.
       LOGICAL :: usrtau = .false.
       LOGICAL prnt(2)
-      REAL*8 :: albedo = 1.d0  ! 1 if use net upward flux
+      REAL*8 albedo
       REAL*8 :: fisot = 0.d0
       REAL*8 :: temis = 0.0
       REAL*8 :: ttemp = 0.0
@@ -72,6 +73,7 @@
          taucum = taucum + dtauc(i)
       enddo
       if (utau(ntau).gt.taucum) utau(ntau) = taucum
+      albedo = albedo_in
       btemp = Tint
       prnt(1) = .false.
       prnt(2) = .false.
@@ -345,7 +347,7 @@ c albedo to improve numerical behavior of eigenvalue/vector
 c computation
 c
       tauc( 0 ) = 0.
-      CALL  zeroit( tauc(0), mxcly+1 )
+      CALL  zeroit2( tauc(0), mxcly+1 )
       DO 20  lc = 1, nlyr
          IF( ssalb(lc) .GT. 1.0 - epsil )  ssalb(lc) = 1.0 - epsil
          tauc(lc) = tauc(lc-1) + dtauc(lc)
@@ -532,7 +534,7 @@ c
       implicit none
       integer lc,lu
       real*8 umumin
-      LOGICAL inperr, planck, quiet, spher, usrtau, wrtbad, wrtdim
+      LOGICAL inperr, planck, quiet, spher, usrtau, wrtbad2, wrtdim2
       INTEGER  maxcly, maxulv, mxcly, mxulv, nlyr, ntau, ierror(*)
       REAL*8 albedo, btemp, dtauc(*), fbeam, fisot, gg(*),
      $     ssalb(*), tauc(0:*), temis, temper(0:*), ttemp,
@@ -540,42 +542,42 @@ c
 c
       inperr = .FALSE.
       IF ( nlyr.LT.1 ) THEN
-         inperr = wrtbad(quiet, 'nlyr' )
+         inperr = wrtbad2(quiet, 'nlyr' )
          ierror(1) = 1
       ENDIF
       IF ( nlyr.GT.maxcly ) THEN
-         inperr = wrtbad(quiet, 'maxcly' )
+         inperr = wrtbad2(quiet, 'maxcly' )
          ierror(2) = 1
       ENDIF
 c
       DO 10  lc = 1, nlyr
          IF ( dtauc(lc).LT.0.0 )  THEN
-            inperr = wrtbad( quiet, 'dtauc' )
+            inperr = wrtbad2( quiet, 'dtauc' )
             ierror(3) = ierror(3) + 1
          ENDIF
          IF ( ssalb(lc).LT.0.0 .OR. ssalb(lc).GT.1.0 ) THEN
-            inperr = wrtbad( quiet, 'ssalb' )
+            inperr = wrtbad2( quiet, 'ssalb' )
             ierror(4) = ierror(4) + 1
          ENDIF
          IF ( planck )  THEN
             IF( lc.EQ.1 .AND. temper(0).LT.0.0 ) THEN
-               inperr = wrtbad( quiet, 'temper' )
+               inperr = wrtbad2( quiet, 'temper' )
                ierror(5) = ierror(5) + 1
             ENDIF
             IF( temper(lc).LT.0.0 ) THEN
-               inperr = wrtbad( quiet, 'temper' )
+               inperr = wrtbad2( quiet, 'temper' )
                ierror(5) = ierror(5) + 1
             ENDIF
          ENDIF
          IF( gg(lc).LT.-1.0 .OR. gg(lc).GT.1.0 ) THEN
-            inperr = wrtbad( quiet, 'gg' )
+            inperr = wrtbad2( quiet, 'gg' )
             ierror(6) = ierror(6) + 1
          ENDIF
  10   CONTINUE
       IF ( spher ) THEN
          DO 11 lc = 1, nlyr
             IF ( zd(lc) .GT. zd(lc-1) ) THEN
-               inperr = wrtbad( quiet, 'zd' )
+               inperr = wrtbad2( quiet, 'zd' )
                ierror(7) = ierror(7) + 1
             ENDIF
  11      CONTINUE
@@ -583,86 +585,86 @@ c
 c
       IF ( usrtau )  THEN
          IF ( ntau.LT.1 ) THEN
-            inperr = wrtbad( quiet, 'ntau' )
+            inperr = wrtbad2( quiet, 'ntau' )
             ierror(8) = 1
          ENDIF
          IF ( maxulv.LT.ntau ) THEN
-            inperr = wrtbad( quiet, 'maxulv' )
+            inperr = wrtbad2( quiet, 'maxulv' )
             ierror(9) = 1
          ENDIF
          DO 20  lu = 1, ntau
             IF( ABS(utau(lu)-tauc(nlyr)).LE.1.E-4) utau(lu) = tauc(nlyr)
             IF( utau(lu).LT.0.0 .OR. utau(lu).GT.tauc(nlyr) ) THEN
-               inperr = wrtbad( quiet, 'utau' )
+               inperr = wrtbad2( quiet, 'utau' )
                ierror(10) = ierror(10) + 1
             ENDIF
  20      CONTINUE
       ELSE
          IF ( maxulv.LT.nlyr+1 ) THEN
-            inperr = wrtbad( quiet, 'maxulv' )
+            inperr = wrtbad2( quiet, 'maxulv' )
             ierror(11) = 1
          ENDIF
       END IF
 c
       IF ( fbeam.LT.0.0 ) THEN
-         inperr = wrtbad( quiet, 'fbeam' )
+         inperr = wrtbad2( quiet, 'fbeam' )
          ierror(12) = 1
       ENDIF
       umumin = 0.0
       IF ( spher ) umumin = - 1.0
       IF ( fbeam.GT.0.0 .AND. ( umu0.LE.umumin .OR. umu0.GT.1.0 ) )
      $     THEN
-         inperr = wrtbad( quiet, 'umu0' )
+         inperr = wrtbad2( quiet, 'umu0' )
          ierror(13) = 1
       ENDIF
       IF ( fisot.LT.0.0 ) THEN
-         inperr = wrtbad( quiet, 'fisot' )
+         inperr = wrtbad2( quiet, 'fisot' )
          ierror(14) = 1
       ENDIF
       IF ( albedo.LT.0.0 .OR. albedo.GT.1.0 ) THEN
-         inperr = wrtbad( quiet, 'albedo' )
+         inperr = wrtbad2( quiet, 'albedo' )
          ierror(15) = 1
       ENDIF
 c
       IF ( planck )  THEN
          IF ( wvnmlo.LT.0.0 .OR. wvnmhi.LT.wvnmlo ) THEN
-            inperr = wrtbad( quiet, 'wvnmlo,hi' )
+            inperr = wrtbad2( quiet, 'wvnmlo,hi' )
             ierror(16) = 1
          ENDIF
          IF ( temis.LT.0.0 .OR. temis.GT.1.0 ) THEN
-            inperr = wrtbad( quiet, 'temis' )
+            inperr = wrtbad2( quiet, 'temis' )
             ierror(17) = 1
          ENDIF
          IF ( btemp.LT.0.0 ) THEN
-            inperr = wrtbad( quiet, 'btemp' )
+            inperr = wrtbad2( quiet, 'btemp' )
             ierror(18) = 1
          ENDIF
          IF ( ttemp.LT.0.0 ) THEN
-            inperr = wrtbad( quiet, 'ttemp' )
+            inperr = wrtbad2( quiet, 'ttemp' )
             ierror(19) = 1
          ENDIF
       END IF
 c
       IF ( mxcly.LT.nlyr ) THEN
-         inperr = wrtdim( quiet, 'mxcly', nlyr )
+         inperr = wrtdim2( quiet, 'mxcly', nlyr )
          ierror(20) = 1
       ENDIF
       IF ( usrtau .AND. mxulv.LT.ntau ) THEN
-         inperr = wrtdim( quiet, 'mxulv', ntau )
+         inperr = wrtdim2( quiet, 'mxulv', ntau )
          ierror(21) = 1
       ENDIF
       IF ( .NOT.usrtau .AND. mxulv.LT.nlyr+1 ) THEN
-         inperr = wrtdim( quiet, 'mxulv', nlyr+1 )
+         inperr = wrtdim2( quiet, 'mxulv', nlyr+1 )
          ierror(22) = 1
       ENDIF
 c
       IF ( inperr .AND. .NOT. quiet )
-     $   CALL errmsg( 'twostr--input and/or dimension errors', .TRUE. )
+     $   CALL errmsg2( 'twostr--input and/or dimension errors', .TRUE. )
 c
       DO 100  lc = 1, nlyr
          IF ( (planck .AND. ABS(temper(lc)-temper(lc-1)) .GT. 50.0)
      $          .AND. .NOT. quiet )
-     $          CALL errmsg( 'chekin--vertical temperature step may'
+     $          CALL errmsg2( 'chekin--vertical temperature step may'
      $          // ' be too large for good accuracy', .FALSE. )
 100   CONTINUE
 c
@@ -738,14 +740,14 @@ c
 c
 c Zero twostr output arrays
 c
-      CALL  zeroit( u0c, mxulv*mxcmu )
-      CALL  zeroit( rfldir, maxulv )
-      CALL  zeroit( fldir,  mxulv )
-      CALL  zeroit( rfldn,  maxulv )
-      CALL  zeroit( fldn,   mxulv )
-      CALL  zeroit( flup,   maxulv )
-      CALL  zeroit( uavg,   maxulv )
-      CALL  zeroit( dfdt,   maxulv )
+      CALL  zeroit2( u0c, mxulv*mxcmu )
+      CALL  zeroit2( rfldir, maxulv )
+      CALL  zeroit2( fldir,  mxulv )
+      CALL  zeroit2( rfldn,  maxulv )
+      CALL  zeroit2( fldn,   mxulv )
+      CALL  zeroit2( flup,   maxulv )
+      CALL  zeroit2( uavg,   maxulv )
+      CALL  zeroit2( dfdt,   maxulv )
 c
 c Loop over user levels
 c
@@ -1269,12 +1271,12 @@ c
       real*8 umu0,zenang,radius,taup,wvnmlo, wvnmhi, ttemp,btemp
       real*8 tempc,albedo,fbeam,temis
       DATA  abscut / 10. /, first / .TRUE. /
-      real*8 chapmn,tplkavg,d1mach
+      real*8 chapmn,tplkavg,d1mach2
 c
       IF ( first ) THEN
          first    = .FALSE.
-         smallest = d1mach(1)
-         biggest  = d1mach(2)
+         smallest = d1mach2(1)
+         biggest  = d1mach2(2)
          pi       = 2. * ASIN( 1.0 )
          nstr     = 2
          nn       = nstr / 2
@@ -1297,10 +1299,10 @@ c
       zenang      = DACOS(umu0) * 180. / pi
       IF( spher .AND. umu0 .LT. 0.0 ) expbea(0) =
      $          DEXP(-chapmn(1,0.d0,tauc,nlyr, zd,dtauc,zenang,radius) )
-      CALL  zeroit( taucpr(0), mxcly+1 )
-      CALL  zeroit( expbea(1), mxcly )
-      CALL  zeroit( flyr, mxcly )
-      CALL  zeroit( oprim, mxcly )
+      CALL  zeroit2( taucpr(0), mxcly+1 )
+      CALL  zeroit2( expbea(1), mxcly )
+      CALL  zeroit2( flyr, mxcly )
+      CALL  zeroit2( oprim, mxcly )
       abstau = 0.0
       DO  60  lc = 1, nlyr
          IF ( abstau.LT.abscut )  ncut = lc
@@ -1391,8 +1393,8 @@ c
       IF ( .NOT. planck )  THEN
          bplank = 0.0
          tplank = 0.0
-         CALL  zeroit( pkag, mxcly+1 )
-         CALL  zeroit( pkagc, mxcly )
+         CALL  zeroit2( pkag, mxcly+1 )
+         CALL  zeroit2( pkagc, mxcly )
       ELSE
          tplank = temis * tplkavg( wvnmlo, wvnmhi, ttemp )
          bplank =         tplkavg( wvnmlo, wvnmhi, btemp )
@@ -1507,7 +1509,7 @@ c     superd(irow) = undefined
          diag(irow) = ( rr(lc) - 2.0*albedo*cmu ) * wk
       ENDIF
 c
-      CALL  zeroit( b, nnlyri )
+      CALL  zeroit2( b, nnlyri )
 c
 c Construct -b-,  for parallel beam + bottom reflection +
 c thermal emission at top and/or bottom
@@ -1578,7 +1580,7 @@ c solve for constants of integration by inverting matrix KST(38-41)
 c
       nrow = irow
 c
-          CALL zeroit( cband, mi9m2*nnlyri)
+          CALL zeroit2( cband, mi9m2*nnlyri)
           DO irow = 1, nrow
              cband(1,irow)   = 0.0
              cband(3,irow)   = diag(irow)
@@ -1590,9 +1592,9 @@ c
              cband(4,irow-1) = subd(irow)
           ENDDO
 c
-          CALL sgbfa(cband, mi9m2, nrow, 1, 1, ipvt, info )
+          CALL sgbfa2(cband, mi9m2, nrow, 1, 1, ipvt, info )
           job = 0
-          CALL sgbsl(cband, mi9m2, nrow, 1, 1, ipvt, b, job )
+          CALL sgbsl2(cband, mi9m2, nrow, 1, 1, ipvt, b, job )
 c
 c unpack
 c
@@ -1622,31 +1624,31 @@ c
      $      yb_1d(*), yb_1u(*), yp_0d(*), yp_0u(*), yp_1d(*),
      $      yp_1u(*), zb_a(*), zp_a(*)
 c
-      CALL  zeroit( ch    , mxcly )
-      CALL  zeroit( kk,     mxcly )
-      CALL  zeroit( ll,     mxcmu*mxcly )
-      CALL  zeroit( rr,     mxcly )
-      CALL  zeroit( xb_0d, mxcly )
-      CALL  zeroit( xb_0u, mxcly )
-      CALL  zeroit( xb_1d, mxcly )
-      CALL  zeroit( xb_1u, mxcly )
-      CALL  zeroit( xp_0, mxcly )
-      CALL  zeroit( xp_1, mxcly )
-      CALL  zeroit( yb_0d, mxcly )
-      CALL  zeroit( yb_0u, mxcly )
-      CALL  zeroit( yb_1d, mxcly )
-      CALL  zeroit( yb_1u, mxcly )
-      CALL  zeroit( yp_0d, mxcly )
-      CALL  zeroit( yp_0u, mxcly )
-      CALL  zeroit( yp_1d, mxcly )
-      CALL  zeroit( yp_1u, mxcly )
-      CALL  zeroit( zb_a, mxcly )
-      CALL  zeroit( zp_a, mxcly )
+      CALL  zeroit2( ch    , mxcly )
+      CALL  zeroit2( kk,     mxcly )
+      CALL  zeroit2( ll,     mxcmu*mxcly )
+      CALL  zeroit2( rr,     mxcly )
+      CALL  zeroit2( xb_0d, mxcly )
+      CALL  zeroit2( xb_0u, mxcly )
+      CALL  zeroit2( xb_1d, mxcly )
+      CALL  zeroit2( xb_1u, mxcly )
+      CALL  zeroit2( xp_0, mxcly )
+      CALL  zeroit2( xp_1, mxcly )
+      CALL  zeroit2( yb_0d, mxcly )
+      CALL  zeroit2( yb_0u, mxcly )
+      CALL  zeroit2( yb_1d, mxcly )
+      CALL  zeroit2( yb_1u, mxcly )
+      CALL  zeroit2( yp_0d, mxcly )
+      CALL  zeroit2( yp_0u, mxcly )
+      CALL  zeroit2( yp_1d, mxcly )
+      CALL  zeroit2( yp_1u, mxcly )
+      CALL  zeroit2( zb_a, mxcly )
+      CALL  zeroit2( zp_a, mxcly )
 c
       RETURN
       END
 c
-      SUBROUTINE zeroit( A, LENGTH )
+      SUBROUTINE zeroit2( A, LENGTH )
 C
 C         ZEROS A REAL ARRAY -A- HAVING -LENGTH- ELEMENTS
 C
@@ -1761,23 +1763,23 @@ C
       REAL*8     C2, CONC, D(2), EPSIL, EX, MV, P(2), SIGMA, SIGDPI,
      $         V(2), VCUT, VCP(7), VSQ
       SAVE     CONC, VMAX, EPSIL, SIGDPI
-      DATA     C2 / 1.438786 /,  SIGMA / 5.67032E-8 /,
+      DATA     C2 / 1.438786 /,  SIGMA / 5.670374419E-8 /,
      $         VCUT / 1.5 /, VCP / 10.25, 5.7, 3.9, 2.9, 2.3, 1.9, 0.0 /
       DATA     PI / 0.0 /
-      real*8 D1MACH, F
+      real*8 D1MACH2, F
 c      F(X) = X**3 / ( DEXP(X) - 1 )
 C
 C
       IF ( PI.EQ.0.0 )  THEN
          PI = 2. * ASIN( 1.0 )
-         VMAX = LOG( D1MACH(2) )
-         EPSIL = D1MACH(4)
+         VMAX = LOG( D1MACH2(2) )
+         EPSIL = D1MACH2(4)
          SIGDPI = SIGMA / PI
          CONC = 15. / PI**4
       END IF
 C
       IF( T.LT.0.0 .OR. WNUMHI.LT.WNUMLO .OR. WNUMLO.LT.0. )
-     $   CALL ERRMSG( 'PLKAVG--TEMPERATURE OR WAVENUMS. WRONG', .TRUE.)
+     $   CALL ERRMSG2( 'PLKAVG--TEMPERATURE OR WAVENUMS. WRONG', .TRUE.)
 C
       IF ( T.LT.1.E-4 )  THEN
          TPLKAVG = 0.0
@@ -1813,7 +1815,7 @@ C
             IF ( ABS( (VAL-OLDVAL)/VAL ) .LE. 1.E-6 )  GO TO 3
             OLDVAL = VAL
     2    CONTINUE
-         CALL ERRMSG( 'PLKAVG--SIMPSON RULE DIDNT CONVERGE', .FALSE. )
+         CALL ERRMSG2( 'PLKAVG--SIMPSON RULE DIDNT CONVERGE', .FALSE. )
 C
     3    TPLKAVG = SIGDPI * T**4 * CONC * VAL
          RETURN
@@ -1867,7 +1869,7 @@ C
 C
       TPLKAVG = SIGDPI * T**4 * TPLKAVG
       IF( TPLKAVG.EQ.0.0 )
-     $    CALL ERRMSG( 'PLKAVG--RETURNS ZERO; POSSIBLE UNDERFLOW',
+     $    CALL ERRMSG2( 'PLKAVG--RETURNS ZERO; POSSIBLE UNDERFLOW',
      $                 .FALSE. )
 C
       RETURN
@@ -1877,7 +1879,7 @@ C
 
 
 
-      SUBROUTINE  SGBFA( ABD, LDA, N, ML, MU, IPVT, INFO )
+      SUBROUTINE  SGBFA2( ABD, LDA, N, ML, MU, IPVT, INFO )
 C
 C         FACTORS A REAL BAND MATRIX BY ELIMINATION.
 C
@@ -1911,7 +1913,7 @@ C
       REAL*8     ABD(LDA,*)
 C
       REAL*8     T
-      INTEGER  I,ISAMAX,I0,J,JU,JZ,J0,J1,K,KP1,L,LM,M,MM,NM1
+      INTEGER  I,ISAMAX2,I0,J,JU,JZ,J0,J1,K,KP1,L,LM,M,MM,NM1
 C
 C
       M = ML + MU + 1
@@ -1941,7 +1943,7 @@ C                                  ** ZERO NEXT FILL-IN COLUMN
          ENDIF
 C                                  ** FIND L = PIVOT INDEX
          LM = MIN0(ML, N-K)
-         L = ISAMAX(LM+1, ABD(M,K), 1) + M - 1
+         L = ISAMAX2(LM+1, ABD(M,K), 1) + M - 1
          IPVT(K) = L + K - M
 C
          IF (ABD(L,K) .EQ. 0.0E0) THEN
@@ -1957,7 +1959,7 @@ C                                ** INTERCHANGE IF NECESSARY
             ENDIF
 C                                   ** COMPUTE MULTIPLIERS
             T = -1.0E0 / ABD(M,K)
-            CALL SSCAL(LM, T, ABD(M+1,K), 1)
+            CALL SSCAL2(LM, T, ABD(M+1,K), 1)
 C
 C                               ** ROW ELIMINATION WITH COLUMN INDEXING
 C
@@ -1971,7 +1973,7 @@ C
                   ABD(L,J) = ABD(MM,J)
                   ABD(MM,J) = T
                ENDIF
-               CALL SAXPY(LM, T, ABD(M+1,K), 1, ABD(MM+1,J), 1)
+               CALL SAXPY2(LM, T, ABD(M+1,K), 1, ABD(MM+1,J), 1)
    80       CONTINUE
 C
          ENDIF
@@ -1982,7 +1984,7 @@ C
       IF (ABD(M,N) .EQ. 0.0E0) INFO = N
       RETURN
       END
-      SUBROUTINE  SGBSL( ABD, LDA, N, ML, MU, IPVT, B, JOB )
+      SUBROUTINE  SGBSL2( ABD, LDA, N, ML, MU, IPVT, B, JOB )
 C
 C         SOLVES THE REAL BAND SYSTEM
 C            A * X = B  OR  TRANSPOSE(A) * X = B
@@ -2047,7 +2049,7 @@ C
       INTEGER  LDA, N, ML, MU, IPVT(*), JOB
       REAL*8     ABD(LDA,*), B(*)
 C
-      REAL*8     SDOT,T
+      REAL*8     SDOT2,T
       INTEGER  K,KB,L,LA,LB,LM,M,NM1
 C
 C
@@ -2065,7 +2067,7 @@ C                               ** FIRST SOLVE L*Y = B
                   B(L) = B(K)
                   B(K) = T
                ENDIF
-               CALL SAXPY( LM, T, ABD(M+1,K), 1, B(K+1), 1 )
+               CALL SAXPY2( LM, T, ABD(M+1,K), 1, B(K+1), 1 )
    20       CONTINUE
          ENDIF
 C                           ** NOW SOLVE  U*X = Y
@@ -2076,7 +2078,7 @@ C                           ** NOW SOLVE  U*X = Y
             LA = M - LM
             LB = K - LM
             T = -B(K)
-            CALL SAXPY(LM, T, ABD(LA,K), 1, B(LB), 1)
+            CALL SAXPY2(LM, T, ABD(LA,K), 1, B(LB), 1)
    40    CONTINUE
 C
       ELSE
@@ -2086,7 +2088,7 @@ C                                  ** FIRST SOLVE  TRANS(U)*Y = B
             LM = MIN0(K, M) - 1
             LA = M - LM
             LB = K - LM
-            T = SDOT(LM, ABD(LA,K), 1, B(LB), 1)
+            T = SDOT2(LM, ABD(LA,K), 1, B(LB), 1)
             B(K) = (B(K) - T)/ABD(M,K)
    60    CONTINUE
 C                                  ** NOW SOLVE TRANS(L)*X = Y
@@ -2094,7 +2096,7 @@ C                                  ** NOW SOLVE TRANS(L)*X = Y
             DO 80 KB = 1, NM1
                K = N - KB
                LM = MIN0(ML, N-K)
-               B(K) = B(K) + SDOT(LM, ABD(M+1,K), 1, B(K+1), 1)
+               B(K) = B(K) + SDOT2(LM, ABD(M+1,K), 1, B(K+1), 1)
                L = IPVT(K)
                IF (L .NE. K) THEN
                   T = B(L)
@@ -2108,7 +2110,7 @@ C
 C
       RETURN
       END
-      REAL*8 FUNCTION  SASUM( N, SX, INCX )
+      REAL*8 FUNCTION  SASUM2( N, SX, INCX )
 C
 C  --INPUT--  N  NUMBER OF ELEMENTS IN VECTOR TO BE SUMMED
 C            SX  SING-PREC ARRAY, LENGTH 1+(N-1)*INCX, CONTAINING VECTOR
@@ -2121,12 +2123,12 @@ C
       integer N,incx,I,M
 C
 C
-      SASUM = 0.0
+      SASUM2 = 0.0
       IF( N.LE.0 )  RETURN
       IF( INCX.NE.1 ) THEN
 C                                          ** NON-UNIT INCREMENTS
           DO 10 I = 1, 1+(N-1)*INCX, INCX
-             SASUM = SASUM + ABS(SX(I))
+             SASUM2 = SASUM2 + ABS(SX(I))
    10     CONTINUE
       ELSE
 C                                          ** UNIT INCREMENTS
@@ -2135,19 +2137,19 @@ C                                          ** UNIT INCREMENTS
 C                             ** CLEAN-UP LOOP SO REMAINING VECTOR
 C                             ** LENGTH IS A MULTIPLE OF 6.
             DO 30  I = 1, M
-              SASUM = SASUM + ABS(SX(I))
+              SASUM2 = SASUM2 + ABS(SX(I))
    30       CONTINUE
          ENDIF
 C                              ** UNROLL LOOP FOR SPEED
          DO 50  I = M+1, N, 6
-           SASUM = SASUM + ABS(SX(I))   + ABS(SX(I+1)) + ABS(SX(I+2))
+           SASUM2 = SASUM2 + ABS(SX(I))   + ABS(SX(I+1)) + ABS(SX(I+2))
      $                   + ABS(SX(I+3)) + ABS(SX(I+4)) + ABS(SX(I+5))
    50    CONTINUE
       ENDIF
 C
       RETURN
       END
-      SUBROUTINE     SAXPY( N, SA, SX, INCX, SY, INCY )
+      SUBROUTINE     SAXPY2( N, SA, SX, INCX, SY, INCY )
 C
 C          Y = A*X + Y  (X, Y = VECTORS, A = SCALAR)
 C
@@ -2214,7 +2216,7 @@ C
 C
       RETURN
       END
-      REAL*8 FUNCTION  SDOT( N, SX, INCX, SY, INCY )
+      REAL*8 FUNCTION  SDOT2( N, SX, INCX, SY, INCY )
 C
 C          S.P. DOT PRODUCT OF VECTORS  'X'  AND  'Y'
 C
@@ -2236,13 +2238,13 @@ C
       REAL*8 SX(*), SY(*)
 C
 C
-      SDOT = 0.0
+      SDOT2 = 0.0
       IF( N.LE.0 )  RETURN
 C
       IF ( INCX.EQ.INCY .AND. INCX.GT.1 )  THEN
 C
           DO 10  I = 1, 1+(N-1)*INCX, INCX
-             SDOT = SDOT + SX(I) * SY(I)
+             SDOT2 = SDOT2 + SX(I) * SY(I)
    10     CONTINUE
 C
       ELSE IF ( INCX.EQ.INCY .AND. INCX.EQ.1 )  THEN
@@ -2253,12 +2255,12 @@ C                                        ** EQUAL, UNIT INCREMENTS
 C                            ** CLEAN-UP LOOP SO REMAINING VECTOR LENGTH
 C                            ** IS A MULTIPLE OF 4.
             DO 20  I = 1, M
-               SDOT = SDOT + SX(I) * SY(I)
+               SDOT2 = SDOT2 + SX(I) * SY(I)
    20       CONTINUE
          ENDIF
 C                              ** UNROLL LOOP FOR SPEED
          DO 30  I = M+1, N, 5
-            SDOT = SDOT + SX(I)*SY(I)     + SX(I+1)*SY(I+1)
+            SDOT2 = SDOT2 + SX(I)*SY(I)     + SX(I+1)*SY(I+1)
      $                  + SX(I+2)*SY(I+2) + SX(I+3)*SY(I+3)
      $                  + SX(I+4)*SY(I+4)
    30    CONTINUE
@@ -2270,7 +2272,7 @@ C               ** NONEQUAL OR NONPOSITIVE INCREMENTS.
          IF( INCX.LT.0 )  IX = 1 + (N-1)*(-INCX)
          IF( INCY.LT.0 )  IY = 1 + (N-1)*(-INCY)
          DO 40  I = 1, N
-            SDOT = SDOT + SX(IX) * SY(IY)
+            SDOT2 = SDOT2 + SX(IX) * SY(IY)
             IX = IX + INCX
             IY = IY + INCY
    40    CONTINUE
@@ -2279,7 +2281,7 @@ C
 C
       RETURN
       END
-      SUBROUTINE     SSCAL( N, SA, SX, INCX )
+      SUBROUTINE     SSCAL2( N, SA, SX, INCX )
 C
 C         CALCULATE  X = A*X  (X = VECTOR, A = SCALAR)
 C
@@ -2327,7 +2329,7 @@ C
 C
       RETURN
       END
-      SUBROUTINE     SSWAP( N, SX, INCX, SY, INCY )
+      SUBROUTINE     SSWAP2( N, SX, INCX, SY, INCY )
 C
 C          INTERCHANGE S.P VECTORS  X  AND  Y
 C
@@ -2406,7 +2408,7 @@ C
 C
       RETURN
       END
-      INTEGER FUNCTION  ISAMAX( N, SX, INCX )
+      INTEGER FUNCTION  ISAMAX2( N, SX, INCX )
 C
 C  --INPUT--  N  NUMBER OF ELEMENTS IN VECTOR OF INTEREST
 C            SX  SING-PREC ARRAY, LENGTH 1+(N-1)*INCX, CONTAINING VECTOR
@@ -2421,9 +2423,9 @@ C
 C
 C
       IF( N.LE.0 ) THEN
-         ISAMAX = 0
+         ISAMAX2 = 0
       ELSE IF( N.EQ.1 ) THEN
-         ISAMAX = 1
+         ISAMAX2 = 1
       ELSE
          SMAX = 0.0
          II = 1
@@ -2431,7 +2433,7 @@ C
             XMAG = ABS(SX(I))
             IF( SMAX.LT.XMAG ) THEN
                SMAX = XMAG
-               ISAMAX = II
+               ISAMAX2 = II
             ENDIF
             II = II + 1
    20    CONTINUE
@@ -2448,7 +2450,7 @@ c $Header: D1MACH.f,v 1.2 97/03/18 17:05:25 wiscombe Exp $
 c ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 c      DOUBLE PRECISION FUNCTION D1MACH(I)
-      REAL*8 FUNCTION D1MACH(I)
+      REAL*8 FUNCTION D1MACH2(I)
 c  Double-precision machine constants (see R1MACH for documentation).
 
 c  By default, returns values appropriate for a computer with IEEE
@@ -2474,19 +2476,19 @@ c ====================================================================
 
       implicit none
       INTEGER   I
-      EXTERNAL  ERRMSG
+      EXTERNAL  ERRMSG2
 
       IF( I.EQ.1 )  THEN
-         D1MACH = 2.3D-308
+         D1MACH2 = 2.3D-308
 c        D1MACH = TINY(1.D0)
       ELSE IF( I.EQ.2 )  THEN
-         D1MACH = 1.7D+308
+         D1MACH2 = 1.7D+308
 c        D1MACH = HUGE(1.D0)
       ELSE IF( I.EQ.4 )  THEN
-         D1MACH = 2.3D-16
+         D1MACH2 = 2.3D-16
 c        D1MACH = EPSILON(1.D0)
       ELSE
-         CALL ERRMSG( 'D1MACH--argument incorrect', .TRUE.)
+         CALL ERRMSG2( 'D1MACH2--argument incorrect', .TRUE.)
       END IF
 
       RETURN
@@ -2498,7 +2500,7 @@ c        D1MACH = EPSILON(1.D0)
 
 
 
-      SUBROUTINE  ERRMSG( MESSAG, FATAL )
+      SUBROUTINE  ERRMSG2( MESSAG, FATAL )
 C
 c        print out a warning or error message;  abort if error
 C
@@ -2528,7 +2530,7 @@ C
      $   'THEY WILL NO LONGER BE PRINTED  <<<<<<<', /// )
       END
 
-      LOGICAL FUNCTION  WRTBAD ( quiet, VARNAM )
+      LOGICAL FUNCTION  WRTBAD2 ( quiet, VARNAM )
 C
 c          write names of erroneous variables and return 'true'
 c
@@ -2543,17 +2545,17 @@ C ----------------------------------------------------------------------
       DATA  NUMMSG / 0 /,  MAXMSG / 50 /
 
 
-      WRTBAD = .TRUE.
+      WRTBAD2 = .TRUE.
       NUMMSG = NUMMSG + 1
       IF ( .NOT. quiet )
      $     WRITE ( *, '(3A)' )  ' ****  INPUT VARIABLE  ', VARNAM,
      $     '  IN ERROR  ****'
       IF ( NUMMSG.EQ.MAXMSG  .AND. .NOT. quiet )
-     $ CALL  ERRMSG( 'TOO MANY INPUT ERRORS.  ABORTING...$', .TRUE. )
+     $ CALL  ERRMSG2( 'TOO MANY INPUT ERRORS.  ABORTING...$', .TRUE. )
       RETURN
       END
 
-      LOGICAL FUNCTION  WRTDIM ( quiet, DIMNAM, MINVAL )
+      LOGICAL FUNCTION  WRTDIM2 ( quiet, DIMNAM, MINVAL )
 C
 c          write name of too-small symbolic dimension and
 c          the value it should be increased to;  return 'true'
@@ -2572,7 +2574,7 @@ C ----------------------------------------------------------------------
       IF ( .NOT. quiet )
      $     WRITE ( *, '(3A,I7)' )  ' ****  SYMBOLIC DIMENSION  ',
      $     DIMNAM, '  SHOULD BE INCREASED TO AT LEAST ', MINVAL
-      WRTDIM = .TRUE.
+      WRTDIM2 = .TRUE.
       RETURN
       END
 
@@ -2583,7 +2585,7 @@ c RCS version control information:
 c $Header: R1MACH.f,v 1.2 97/03/18 17:04:13 wiscombe Exp $
 c ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-      REAL FUNCTION R1MACH(I)
+      REAL FUNCTION R1MACH2(I)
 
 c        Single-precision machine constants
 
@@ -2640,19 +2642,19 @@ c      http://www.netlib.org/
 c ====================================================================
       implicit none
       INTEGER I
-      EXTERNAL  ERRMSG
+      EXTERNAL  ERRMSG2
 
       IF( I.EQ.1 )  THEN
-         R1MACH = 1.2E-38
+         R1MACH2 = 1.2E-38
 c        R1MACH = TINY(1.0)
       ELSE IF( I.EQ.2 )  THEN
-         R1MACH = 3.4E+38
+         R1MACH2 = 3.4E+38
 c        R1MACH = HUGE(1.0)
       ELSE IF( I.EQ.4 )  THEN
-         R1MACH = 1.2E-07
+         R1MACH2 = 1.2E-07
 c        R1MACH = EPSILON(1.0)
       ELSE
-         CALL ERRMSG( 'R1MACH--argument incorrect', .TRUE.)
+         CALL ERRMSG2( 'R1MACH2--argument incorrect', .TRUE.)
       END IF
 
       RETURN

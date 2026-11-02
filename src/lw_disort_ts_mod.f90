@@ -1,5 +1,7 @@
 !!!
-! Elspeth KH Lee - Jun 2024
+! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Nov 2026 : Pass a local copy of nlev to TWOSTR (it overwrites ntau)
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
 ! lw: two-stream disort method with modifications from Xianyu Tan.
 !     Pros: Accurate and reasonably fast multiple scattering method
 !     Cons: Two-stream only, can be inaccurate
@@ -7,13 +9,13 @@
 
 module lw_disort_ts_mod
   use, intrinsic :: iso_fortran_env
-  use WENO4_mod, only : interpolate_weno4  
+  use WENO4_mod, only : interpolate_weno4
   implicit none
 
   !! Precision variables
   integer, parameter :: dp = REAL64
 
-  private 
+  private
   public :: lw_disort_ts
 
 contains
@@ -36,9 +38,8 @@ contains
     real(dp), dimension(nlev), intent(out) :: lw_up, lw_down, lw_net
     real(dp), intent(out) :: olr
 
-
     !! Work variables
-    integer :: b, g, i
+    integer :: b, g, i, ntau
     real(dp), dimension(nlev) :: Te
 
     !! Conversion arrays from FMS to DISORT dimensions and work variables
@@ -48,18 +49,18 @@ contains
     real(dp), dimension(maxcly) :: dtauc
     real(dp), dimension(maxcly) :: ggg, ssalb
     real(dp), dimension(maxulv) :: lw_net_d, lw_up_d, lw_down_d, utau
-    real(dp), dimension(nb,maxulv) :: lw_net_b, lw_up_b, lw_down_b
-    real(dp), dimension(ng,maxulv) :: lw_net_g, lw_up_g, lw_down_g
+    real(dp), dimension(maxulv) :: lw_net_g, lw_up_g, lw_down_g
     real(dp) :: umu0, fbeam
     logical :: planck
 
+    !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
+    Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
 
-    !! Use WENO4 method to (smoothly) interpolate layers to levels
-    Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
-
-    !! Edges are linearly interpolated to avoid overshoot
-    Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-    Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+    !! Edges are linearly extrapolated in log(p)-log(T) space.
+    Te(1) = 10.0_dp**(log10(Te(2)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * &
+      & log10(Tl(1)/Te(2)))
+    Te(nlev) = 10.0_dp**(log10(Te(nlay)) + (log10(pe(nlev)/pe(nlay))/ &
+      & log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
 
     Te_0(:) = 0.0_dp
     Te_0(0:nlay) = Te(1:nlev)
@@ -75,10 +76,9 @@ contains
     ssalb(:) = 0.0_dp
     utau(:) = 0.0_dp
     dtauc(:) = 0.0_dp
+
+    !! Sum over each band and g-ordinance
     do b = 1, nb
-      lw_net_b(b,:) = 0.0_dp
-      lw_up_b(b,:) = 0.0_dp
-      lw_down_b(b,:) = 0.0_dp
       wvnmlo = wn_e(b+1)
       wvnmhi = wn_e(b)
       do g = 1, ng
@@ -88,15 +88,16 @@ contains
         do i = 1, nlay
           dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
         end do
-        call call_twostr(nlay,Te,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
-          &  lw_net_g(g,:),lw_up_g(g,:),lw_down_g(g,:))
-        lw_net_b(b,:) = lw_net_b(b,:) + lw_net_g(g,:) * gw(g)
-        lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
-        lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
+        ! A unit-reflecting mathematical lower boundary plus the emitted Tint
+        ! term imposes F_up - F_down = in-band sigma*Tint**4.
+        ! TWOSTR overwrites its ntau argument, so pass a local copy of nlev
+        ntau = nlev
+        call call_twostr(nlay,1.0_dp,Te_0,ggg,ssalb,dtauc,ntau,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
+          & lw_net_g(:),lw_up_g(:),lw_down_g(:))
+        lw_net_d(:) = lw_net_d(:) + lw_net_g(:) * gw(g)
+        lw_up_d(:) = lw_up_d(:) + lw_up_g(:) * gw(g)
+        lw_down_d(:) = lw_down_d(:) + lw_down_g(:) * gw(g)
       end do
-      lw_net_d(:) = lw_net_d(:) + lw_net_b(b,:)
-      lw_up_d(:) = lw_up_d(:) + lw_up_b(b,:)
-      lw_down_d(:) = lw_down_d(:) + lw_down_b(b,:)
     end do
 
     lw_net(:) = lw_net_d(1:nlev)

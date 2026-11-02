@@ -2,6 +2,9 @@
 ! Elspeth KH Lee - May 2021 : Initial version
 !                - Jan 2022 : Working version
 !                - Jun 2024 : Optimisations
+!                - Oct 2026 : Exo-FMS_2 version, gas giant lower boundary
+!                - Nov 2026 : Resonance guard, zcorr energy conservation fix, renamed sw_Toon89 (was sw_Toon)
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
 !
 ! sw: Two-stream method following the "Toon89" method (Toon et al. 1989)
 !     Based on the CHIMERA code by Mike Line, but cleaned up slightly
@@ -9,28 +12,35 @@
 !     Cons: For combined high ssa and g (0.9+,0.9+) can be unstable and inaccurate
 !!!
 
-module sw_Toon_mod
+module sw_Toon89_mod
   use, intrinsic :: iso_fortran_env
   implicit none
 
   !! Precision variables
   integer, parameter :: dp = REAL64
 
-  private :: sw_Toon89, dtridgl
-  public :: sw_Toon
+  !! Single scattering albedo cap - exactly conservative scattering (w = 1, eigenvalue k = 0) is singular.
+  !! 1 - 1e-12 absorbs < 1e-8 of the incident flux even in a tau ~ 6000 column
+  real(dp), parameter :: w_max = 1.0_dp - 1.0e-12_dp
+
+  !! How close to the lambda*mu0 = 1 resonance before mu0 is nudged
+  real(dp), parameter :: res_eps = 1.0e-6_dp
+
+  private :: sw_Toon89_method, dtridgl
+  public :: sw_Toon89
 
 contains
 
-  subroutine sw_Toon(nlay, nlev, nb, ng, gw, tau_e, mu_z, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+  subroutine sw_Toon89(nlay, nlev, nb, ng, gw, tau_e, mu_z, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev, nb, ng
-    real(dp), dimension(ng) :: gw
+    real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev) :: mu_z
-    real(dp), dimension(nb) :: Finc, a_surf
+    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: sw_up, sw_down, sw_net
@@ -38,31 +48,23 @@ contains
 
     !! Work variables
     integer :: b, g
-    real(dp), dimension(nb,nlev) :: sw_down_b, sw_up_b
-    real(dp), dimension(ng,nlev) :: sw_down_g, sw_up_g
+    real(dp), dimension(nlev) :: sw_up_g, sw_down_g
+    real(dp), parameter :: a_surf = 0.0_dp   ! gas giant: no reflecting lower boundary
 
+    sw_up(:) = 0.0_dp
+    sw_down(:) = 0.0_dp
 
-    !! Shortwave flux calculation
+    !! Shortwave flux calculation - sum over each band and g-ordinance
     if (mu_z(nlev) > 0.0_dp) then
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
       do b = 1, nb
-        sw_down_b(b,:) = 0.0_dp
-        sw_up_b(b,:) = 0.0_dp
-        if (Finc(b) <= 0.0_dp) then
-          cycle
-        end if
+        if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_Toon89(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), sw_down_g(g,:), sw_up_g(g,:))
-          sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
-          sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
+          call sw_Toon89_method(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf, &
+            & sw_down_g(:), sw_up_g(:))
+          sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
+          sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
-        sw_down(:) = sw_down(:) + sw_down_b(b,:)
-        sw_up(:) = sw_up(:) + sw_up_b(b,:)
       end do
-    else
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
     end if
 
     !! Net sw flux
@@ -71,9 +73,9 @@ contains
     !! Absorbed Stellar Radiation (ASR)
     asr = sw_down(1) - sw_up(1)
 
-  end subroutine sw_Toon
+  end subroutine sw_Toon89
 
-  subroutine sw_Toon89(nlay, nlev, F0_in, mu_in, tau_in, w_in, g_in, w_surf_in, flx_down, flx_up)
+  subroutine sw_Toon89_method(nlay, nlev, F0_in, mu_in, tau_in, w_in, g_in, w_surf_in, flx_down, flx_up)
     implicit none
 
     !! Input variables
@@ -90,7 +92,7 @@ contains
     integer :: l, lm2, lm1
 
     real(dp), dimension(nlev) :: dir, tau, cum_trans
-    real(dp), dimension(nlay) :: dtau_in, dtau, mu_zm
+    real(dp), dimension(nlay) :: dtau_in, dtau, mu_zm, trans_top, trans_lay, F0_l
     real(dp), dimension(nlay) :: w0, hg
     real(dp), dimension(nlay) :: g1, g2, g3, g4
     real(dp), dimension(nlay) :: lam, gam, denom
@@ -99,8 +101,6 @@ contains
     real(dp), dimension(nlay+nlay) :: Af, Bf, Cf, Df, xk
     real(dp), dimension(nlay) :: xk1, xk2
 
-    !! Optimisation Variables
-    real(dp), dimension(nlay) :: opt1
     real(dp), parameter :: sqrt3 = sqrt(3.0_dp)
     real(dp), parameter :: sqrt3d2 = sqrt3/2.0_dp
     real(dp), parameter :: bsurf = 0.0_dp, btop = 0.0_dp  ! Surface 'emission' boundary fluxes (0 for shortwave)
@@ -136,8 +136,9 @@ contains
 
     dtau_in(:) = tau_in(2:nlev) - tau_in(1:nlay)
 
-    ! Delta eddington scaling
+    !! Delta-Eddington scaling
     w0(:) = ((1.0_dp - g_in(:)**2)*w_in(:))/(1.0_dp-w_in(:)*g_in(:)**2)
+    w0(:) = min(w0(:), w_max)
     dtau(:) = (1.0_dp-w_in(:)*g_in(:)**2)*dtau_in(:)
     hg(:) = g_in(:)/(1.0_dp + g_in(:))
 
@@ -146,48 +147,54 @@ contains
       tau(k+1) = tau(k) + dtau(k)
     end do
 
+    !! Zenith angle in each layer (zcorr uses the lower level, as the cumulative transmission)
     if (mu_in(nlev) == mu_in(1)) then
-      ! No zenith correction, use regular method
-      dir(:) = F0_in * mu_in(nlev) * exp(-tau(:)/mu_in(nlev))
       mu_zm(:) = mu_in(nlev)
     else
-      ! Zenith angle correction, use cumulative transmission function
-      cum_trans(1) = tau(1)/mu_in(1)
-      do k = 1, nlev-1
-        cum_trans(k+1) = cum_trans(k) + (tau(k+1) - tau(k))/mu_in(k+1)
-      end do
-      do k = 1, nlev
-        dir(k) = F0_in * mu_in(nlev) * exp(-cum_trans(k))
-      end do
-      mu_zm(:) = (mu_in(1:nlay) + mu_in(2:nlev))/2.0_dp ! Zenith angle at midpoints
+      mu_zm(:) = mu_in(2:nlev)
     end if
+
+    !! Direct beam transmission to each level
+    cum_trans(1) = tau(1)/mu_zm(1)
+    do k = 1, nlay
+      cum_trans(k+1) = cum_trans(k) + dtau(k)/mu_zm(k)
+    end do
+    dir(:) = F0_in * mu_in(nlev) * exp(-cum_trans(:))
+    trans_top(:) = exp(-cum_trans(1:nlay))
 
     g1(:) = sqrt3d2 * (2.0_dp-w0(:)*(1.0_dp+hg(:)))
     g2(:) = (sqrt3d2*w0(:)) * (1.0_dp-hg(:))
     where (g2(:) == 0.0_dp)
       g2(:) = 1.0e-10_dp
     end where
-    g3(:) = (1.0_dp - sqrt3*hg(:)*mu_zm(:))/2.0_dp
-    g4(:) = 1.0_dp - g3(:)
 
     lam(:) = sqrt(g1(:)**2 - g2(:)**2)
     gam(:) = (g1(:) - lam(:))/g2(:)
 
+    !! Nudge mu0 off the lambda*mu0 = 1 resonance (0/0 in the particular solution)
+    !! the nudged angle is only used in the layer's own particular solution
+    do k = 1, nlay
+      if (abs(1.0_dp - lam(k)*mu_zm(k)) < res_eps) then
+        mu_zm(k) = mu_zm(k) + 2.0_dp*res_eps/lam(k)
+      end if
+    end do
+    g3(:) = (1.0_dp - sqrt3*hg(:)*mu_zm(:))/2.0_dp
+    g4(:) = 1.0_dp - g3(:)
+
+    !! Beam flux in each layer, so the beam scatters exactly the energy it loses (energy conserving with zcorr)
+    F0_l(:) = F0_in * mu_in(nlev)/mu_zm(:)
+
     denom(:) = lam(:)**2 - 1.0_dp/(mu_zm(:)**2)
-    where (denom(:) == 0.0_dp)
-      denom(:) = 1.0e-10_dp
-    end where
-    Am(:) = F0_in * w0(:) * (g4(:) * (g1(:) + 1.0_dp/mu_zm(:)) + g2(:)*g3(:))/denom(:)
-    Ap(:) = F0_in * w0(:) * (g3(:) * (g1(:) - 1.0_dp/mu_zm(:)) + g2(:)*g4(:))/denom(:)
+    Am(:) = F0_l(:) * w0(:) * (g4(:) * (g1(:) + 1.0_dp/mu_zm(:)) + g2(:)*g3(:))/denom(:)
+    Ap(:) = F0_l(:) * w0(:) * (g3(:) * (g1(:) - 1.0_dp/mu_zm(:)) + g2(:)*g4(:))/denom(:)
 
     ! Cpm1 and Cmm1 are the C+ and C- terms evaluated at the top of the layer.
-    opt1(:) = exp(-tau(1:nlay)/mu_zm(:))
-    Cpm1(:) = Ap(:) * opt1(:)
-    Cmm1(:) = Am(:) * opt1(:)
+    Cpm1(:) = Ap(:) * trans_top(:)
+    Cmm1(:) = Am(:) * trans_top(:)
     ! Cp and Cm are the C+ and C- terms evaluated at the bottom of the layer.
-    opt1(:) = exp(-tau(2:nlev)/mu_zm(:))
-    Cp(:) = Ap(:) * opt1(:)
-    Cm(:) = Am(:) * opt1(:)
+    trans_lay(:) = trans_top(:) * exp(-dtau(:)/mu_zm(:))
+    Cp(:) = Ap(:) * trans_lay(:)
+    Cm(:) = Am(:) * trans_lay(:)
 
     ! Solve for the coefficients of system of equations using boundary conditions
     ! Exponential terms:
@@ -245,9 +252,8 @@ contains
     flx_down(nlev) = xk1(nlay)*Ep(nlay)*gam(nlay)+xk2(nlay)*Em(nlay)+Cm(nlay)
 
     flx_down(:) = flx_down(:) + dir(:)
-    flx_up(:) = flx_up(:)
 
-  end subroutine sw_Toon89
+  end subroutine sw_Toon89_method
 
   subroutine dtridgl(l, af, bf, cf, df, xk)
     implicit none
@@ -257,9 +263,8 @@ contains
     real(dp), dimension(l), intent(out) :: xk
 
     integer :: i
-    integer, parameter :: nmax = 301
     real(dp) :: x
-    real(dp), dimension(nmax) :: as, ds
+    real(dp), dimension(l) :: as, ds
 
     as(l) = af(l)/bf(l)
     ds(l) = df(l)/bf(l)
@@ -278,4 +283,4 @@ contains
 
   end subroutine dtridgl
 
-end module sw_Toon_mod
+end module sw_Toon89_mod

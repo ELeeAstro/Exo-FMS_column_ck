@@ -1,14 +1,16 @@
 !!!
 ! Elspeth KH Lee - Aug 2023 : Initial version
-! lw: (Extended) Absorption Approximation following Li (2002) (alpha-nEAA) - This is the linear in tau method
-! However, I use the Toon et al. (1989) method rather than Li (2002), as it is more stable at low optical depth.
+! lw: Extended Absorption Approximation (EAA) following Li (2002) - This is the linear in tau method
 !     Pros: Very fast method with LW scattering approximation, no matrix inversions
 !     Cons: Not technically multiple scattering (can be quite innacurate at even moderate albedo)
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!
 !!!
 
 module lw_AA_L_mod
   use, intrinsic :: iso_fortran_env
-  use WENO4_mod, only : interpolate_weno4  
+  use WENO4_mod, only : interpolate_weno4
+  use BB_integrate_mod, only : BB_integrate
   implicit none
 
   !! Precision variables
@@ -16,42 +18,33 @@ module lw_AA_L_mod
 
   !! Required constants
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
-  real(dp), parameter :: twopi = 2.0_dp * pi
   real(dp), parameter :: sb = 5.670374419e-8_dp
-  real(dp), parameter :: hp = 6.62607015e-34_dp
-  real(dp), parameter :: kb = 1.380649e-23_dp
-  real(dp), parameter :: c_s = 2.99792458e8_dp
-  real(dp), parameter :: c1 = (hp * c_s) / kb
-  real(dp), parameter :: c2 = c_s**2
-  real(dp), parameter :: n2 = 2.0_dp * hp * c2
 
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
-  !! make sure to make clean and recompile if you change these
-  !! For HJ's we actually care about stratospheric heating rates, so Gauss–Laguerre quadrature is generally best for 4+ stream, 
-  !! even for cloudy regions (Hogan 2024).
-  
-  !! Optimised quadrature for 1 node (Hogan 2024)
+  !! make sure to make clean and recompile if you change these.
+
+  !! Optimised quadrature for 1 node - 2 stream (Hogan 2024)
   ! integer, parameter :: nmu = 1
   ! real(dp), dimension(nmu), parameter :: uarr = (/0.6096748751_dp/)
   ! real(dp), dimension(nmu), parameter :: w = (/1.0_dp/)
 
-  !! Gauss–Laguerre quadrature for 2 nodes (Hogan 2024)
-  integer, parameter :: nmu = 2
-  real(dp), dimension(nmu), parameter :: uarr = (/0.1813898346_dp, 0.7461018061_dp/)
-  real(dp), dimension(nmu), parameter :: w = (/0.1464466094_dp, 0.8535533906_dp/)
+  !! Gauss–Jacobi-5 quadrature for 2 nodes - 4 stream (Hogan 2024)
+  !integer, parameter :: nmu = 2
+  !real(dp), dimension(nmu), parameter :: uarr = (/0.2509907356_dp, 0.7908473981_dp/)
+  !real(dp), dimension(nmu), parameter :: w = (/0.2300253764_dp, 0.7699746236_dp/)
 
-  !! Gauss–Laguerre quadrature for 3 nodes (Hogan 2024)
+  !! Gauss–Jacobi-5 quadrature for 3 nodes - 6 stream (Hogan 2024)
   ! integer, parameter :: nmu = 3
-  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0430681066_dp, 0.3175435896_dp, 0.8122985952_dp/)
-  ! real(dp), dimension(nmu), parameter :: w = (/0.0103892565_dp, 0.2785177336_dp, 0.7110930099_dp/)
+  ! real(dp), dimension(nmu), parameter :: uarr = (/0.1024922169_dp, 0.4417960320_dp, 0.8633751621_dp/)
+  ! real(dp), dimension(nmu), parameter :: w = (/0.0437820218_dp, 0.3875796738_dp, 0.5686383044_dp/)
 
-  !! Gauss–Laguerre quadrature for 4 nodes (Hogan 2024)
-  ! integer, parameter :: nmu = 4
-  ! real(dp), dimension(nmu), parameter :: uarr = (/0.0091177205_dp, 0.1034869099_dp, 0.4177464746_dp, 0.8510589811_dp/)
-  ! real(dp), dimension(nmu), parameter :: w = (/0.0005392947_dp, 0.0388879085_dp, 0.3574186924_dp, 0.6031541043_dp /)
+  !! Gauss–Jacobi-5 quadrature for 4 nodes - 8 stream (Hogan 2024)
+  integer, parameter :: nmu = 4
+  real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
+  real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
 
-  private :: lw_AA_linear, BB_integrate
+  private :: lw_AA_linear
   public :: lw_AA_L
 
 contains
@@ -79,36 +72,33 @@ contains
     real(dp), dimension(nlev) :: Te
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
-    real(dp), dimension(nb,nlev) :: lw_down_b, lw_up_b
-    real(dp), dimension(ng,nlev) :: lw_down_g, lw_up_g
+    real(dp), dimension(nlev) :: lw_up_g, lw_down_g
 
-    !! Use WENO4 method to (smoothly) interpolate layers to levels
-    Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
+    !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
+    Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
 
-    !! Edges are linearly interpolated to avoid overshoot
-    Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-    Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+    !! Edges are linearly extrapolated in log(p)-log(T) space.
+    Te(1) = 10.0_dp**(log10(Te(2)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * &
+      & log10(Tl(1)/Te(2)))
+    Te(nlev) = 10.0_dp**(log10(Te(nlay)) + (log10(pe(nlev)/pe(nlay))/ &
+      & log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
 
     !! Find integrated planck function for each band for each level
     do k = 1, nlev
-      call BB_integrate(nb, Te(k), wn_e, be(:,k))   ! Integrated planck function intensity at levels for each band
+      call BB_integrate(nb, Te(k), wn_e, be(:,k))
     end do
     call BB_integrate(nb, Tint, wn_e, be_int) ! Integrated planck function intensity for internal temperature
 
-    !! Longwave flux calculation
+    !! Longwave flux calculation - sum over each band and g-ordinance
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
-      lw_up_b(b,:) = 0.0_dp
-      lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_AA_linear(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(g,:), lw_down_g(g,:))
-        lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
-        lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
+        call lw_AA_linear(nlay, nlev, be(b,:), be_int(b), .false., tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), nmu, uarr, w, &
+          & lw_up_g(:), lw_down_g(:))
+        lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
+        lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
-      lw_up(:) = lw_up(:) + lw_up_b(b,:)
-      lw_down(:) = lw_down(:) + lw_down_b(b,:)
     end do
 
     !! Net lw fluxes at each level
@@ -119,60 +109,33 @@ contains
 
   end subroutine lw_AA_L
 
-  subroutine lw_AA_linear(nlay, nlev, be, be_int, tau_in, w_in, g_in, flx_up, flx_down)
+  subroutine lw_AA_linear(nlay, nlev, be, be_int, surf, tau_in, w_in, g_in, nm, mu_q, w_q, &
+    & flx_up, flx_down)
     implicit none
 
     !! Input variables
-    integer, intent(in) :: nlay, nlev
+    integer, intent(in) :: nlay, nlev, nm
     real(dp), dimension(nlev), intent(in) :: be, tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
     real(dp), intent(in) :: be_int
+    logical, intent(in) :: surf                     
+    real(dp), dimension(nm), intent(in) :: mu_q, w_q 
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
     !! Work variables
     integer :: k, m
-    real(dp), dimension(nlay) :: dtau, w0, hg, eps, dtau_a
-    real(dp), dimension(nlay) :: b1, b0, T
+    real(dp), dimension(nlay) :: dtau, eps, dtau_a
+    real(dp), dimension(nlay) :: del, T, e0i, psi_u, psi_0
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
-    real(dp), dimension(nlay) :: fc, sigma_sq, pmom2, c
-    integer, parameter :: nstr = nmu*2
+    real(dp), parameter :: small_tau = 1.0e-3_dp
 
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
 
-    !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
-    !! Assume HG phase function for scaling
-    
-    where (g_in(:) >= 1e-6_dp)
-      fc(:) = g_in(:)**(nstr)
-      pmom2(:) = g_in(:)**(nstr+1)
-      sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
-      & ( log(fc(:)**2/pmom2(:)**2) )
-      c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
-      fc(:) = c(:)*fc(:)
-
-      w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
-      dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
-
-    elsewhere
-      w0(:) = w_in(:)
-    end where
-
-    hg(:) = g_in(:)
-
-    !! Linear B with tau function
-    where (dtau(:) <= 1.0e-6_dp)
-      b1(:) = 0.0_dp
-      b0(:) = 0.5_dp*(be(2:nlev) + be(1:nlay))
-    elsewhere
-      b1(:) = (be(2:nlev) - be(1:nlay))/dtau(:) 
-      b0(:) = be(1:nlay)
-    end where
-
-    !! modified co-albedo epsilon
-    eps(:) = sqrt((1.0_dp - w0(:))*(1.0_dp - hg(:)*w0(:)))
-    !eps(:) = (1.0_dp - w0(:))
+    !! EAA modified co-albedo.  No delta scaling is needed because this
+    !! transport combination is invariant under a consistent delta transform.
+    eps(:) = sqrt((1.0_dp - w_in(:))*(1.0_dp - g_in(:)*w_in(:)))
 
     !! Absorption/modified optical depth for transmission function
     dtau_a(:) = eps(:)*dtau(:)
@@ -182,29 +145,44 @@ contains
     flx_down(:) = 0.0_dp
 
     !! Start loops to integrate in mu space
-    do m = 1, nmu
+    do m = 1, nm
 
-      !! Transmission function
-      T(:) = exp(-dtau_a(:)/uarr(m))
+      !! Use their Taylor expansions at small slant absorption optical thickness.
+      del(:) = dtau_a(:)/mu_q(m)
+      where (del(:) < small_tau)
+        psi_0(:) = del(:)*(0.5_dp + del(:)*(-1.0_dp/6.0_dp + del(:)/24.0_dp))
+        psi_u(:) = del(:)*(0.5_dp + del(:)*(-1.0_dp/3.0_dp + del(:)/8.0_dp))
+        T(:) = 1.0_dp - psi_u(:) - psi_0(:)
+      elsewhere
+        T(:) = exp(-del(:))
+        e0i(:) = 1.0_dp - T(:)
+        psi_0(:) = (del(:) - e0i(:))/del(:)
+        psi_u(:) = e0i(:) - psi_0(:)
+      end where
 
-      !! Begin two-stream loops
+      !! Begin angular sweeps
       !! Perform downward loop first
-      ! Top boundary condition - intensity downward from top boundary (tautop, assumed isothermal)
+      ! Top boundary condition - no downward intensity at the top
       lw_down_g(1) = 0.0_dp
       do k = 1, nlay
-        lw_down_g(k+1) = lw_down_g(k)*T(k) + b0(k)*(1.0_dp - T(k)) + b1(k)*(uarr(m)*T(k)+dtau(k)-uarr(m)) ! TS intensity
+        lw_down_g(k+1) = lw_down_g(k)*T(k) + psi_u(k)*be(k) + psi_0(k)*be(k+1)
       end do
 
       !! Perform upward loop
-      ! Lower boundary condition - internal heat definition Fint = F_up - F_down
-      lw_up_g(nlev) = lw_down_g(nlev) + be_int
+      ! Lower boundary condition - internal heat definition Fint = F_up - F_down,
+      ! or a black-body surface (surf)
+      if (surf) then
+        lw_up_g(nlev) = be_int
+      else
+        lw_up_g(nlev) = lw_down_g(nlev) + be_int
+      end if
       do k = nlay, 1, -1
-        lw_up_g(k) = lw_up_g(k+1)*T(k) + b0(k)*(1.0_dp - T(k)) + b1(k)*(uarr(m)-(dtau(k)+uarr(m))*T(k)) ! TS intensity
+        lw_up_g(k) = lw_up_g(k+1)*T(k) + psi_0(k)*be(k) + psi_u(k)*be(k+1)
       end do
 
       !! Sum up flux arrays with Gaussian quadrature weights and points for this mu stream
-      flx_down(:) = flx_down(:) + lw_down_g(:) * w(m)
-      flx_up(:) = flx_up(:) + lw_up_g(:) * w(m)
+      flx_down(:) = flx_down(:) + lw_down_g(:) *  w_q(m)
+      flx_up(:) = flx_up(:) + lw_up_g(:) *  w_q(m)
 
     end do
 
@@ -213,55 +191,5 @@ contains
     flx_up(:) = pi * flx_up(:)
 
   end subroutine lw_AA_linear
-
-  subroutine BB_integrate(n_b, Te, wn_e, be)
-    implicit none
-
-    integer, intent(in) :: n_b
-    real(dp), intent(in) :: Te
-    real(dp), dimension(n_b+1), intent(in) :: wn_e
-
-    real(dp), dimension(n_b), intent(out) :: be
-
-    integer :: ww, j, intitera
-    real(dp), dimension(n_b+1) :: iB
-    real(dp) :: x, x2, x3, itera, summ, dn
-
-    !! Code for integrating the blckbody function between two wavenumbers
-    !! This is a method that uses a sum convergence
-    !! Taken from: spectralcalc.com/blackbody/inband_radiance.html
-
-      if (Te < 1e-6_dp) then
-        be(:) = 0.0_dp
-        return
-      end if
-
-      do ww = 1, n_b+1
-
-        x = c1 * 100.0_dp * wn_e(ww)/ Te
-        x2 = x**2
-        x3 = x**3
-
-        itera = 2.0_dp + 20.0_dp/x
-        if (itera > 150) then
-          itera = 150
-        end if
-        intitera = int(itera)
-
-        summ = 0.0_dp
-        do j = 1, intitera + 1
-          dn = 1.0_dp/real(j,kind=dp)
-          summ = summ +  exp(-min(real(j,kind=dp)*x,300.0_dp))* &
-          & (x3 + (3.0_dp * x2 + 6.0_dp*(x+dn)*dn)*dn)*dn
-        end do
-
-        iB(ww) = n2 * (Te/c1)**(4) * summ
-      end do
-
-      do ww = 1, n_b
-        be(ww) = max(iB(ww+1) - iB(ww),0.0_dp)
-      end do
-
-  end subroutine BB_integrate
 
 end module lw_AA_L_mod

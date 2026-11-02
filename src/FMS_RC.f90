@@ -2,7 +2,7 @@
 ! Elspeth KH Lee - May 2021
 ! A simple program that emulates a column inside the Exo-FMS GCM
 ! This is useful for testing different RT solutions
-! This version is for semi-grey radiation only
+! This version is for correlated-k radiation
 !
 ! Input parameters are set via the namelist (FMS_RC.nml) - hopefully paramaters are
 ! somewhat self explanatory. See the github readme for more information.
@@ -16,22 +16,30 @@ program Exo_FMS_RC
   use sw_direct_mod, only : sw_direct
   use sw_adding_mod, only : sw_adding
   use sw_SDA_mod, only : sw_SDA
-  use sw_Toon_mod, only : sw_Toon
+  use sw_Toon89_mod, only : sw_Toon89
   use sw_SH2_mod, only : sw_SH2
   use sw_SH4_mod, only : sw_SH4
+  use sw_AD_mod, only : sw_AD
+  use sw_Liou88_mod, only : sw_Liou88
   use sw_disort_ts_mod, only : sw_disort_ts
-  !use sw_disort_mod, only : sw_disort
-  !use sw_Feautrier_mod, only : sw_Feautrier
+  use sw_disort_mod, only : sw_disort
 
   use lw_AA_E_mod, only : lw_AA_E
   use lw_AA_L_mod, only : lw_AA_L
   use lw_sc_linear_mod, only : lw_sc_linear
-  use lw_VIM_mod, only : lw_VIM
-  use lw_Toon_mod, only : lw_Toon
+  use lw_sc_scat_ric_mod, only : lw_sc_scat_ric
+  use lw_VIM_E_mod, only : lw_VIM_E
+  use lw_VIM_L_mod, only : lw_VIM_L
+  use lw_Toon89_mod, only : lw_Toon89
+  use lw_SH2_mod, only : lw_SH2
+  use lw_SH4_mod, only : lw_SH4
   use lw_disort_ts_mod, only : lw_disort_ts
-  !use lw_disort_mod, only : lw_disort
-  !use lw_Feautrier_mod, only : lw_Feautrier
-  !use lw_AD_mod, only : lw_AD
+  use lw_disort_mod, only : lw_disort
+  use lw_AD_mod, only : lw_AD
+  use lw_DDA_mod, only : lw_DDA
+  use lw_Fu97_mod, only : lw_Fu97
+  use lw_TAS_mod, only : lw_TAS
+  use lw_DFE_mod, only : lw_DFE
 
   use ce_interp_mod, only : interp_ce_table
   use ce_Burrows_mod, only : analytic_Burrows
@@ -40,7 +48,8 @@ program Exo_FMS_RC
 
   use IC_mod, only : IC_profile
 
-  use dry_conv_adj_mod, only : Ray_dry_adj
+  use Manabe_dry_adjust_mod, only : Manabe_dry_adjust
+  use Pierrehumbert_dry_adjust_mod, only : Pierrehumbert_dry_adjust
   use MLT_mod, only : MLT
 
   use ieee_arithmetic
@@ -68,6 +77,7 @@ program Exo_FMS_RC
   real(dp), allocatable, dimension(:,:,:) :: k_l
   real(dp), allocatable, dimension(:,:,:) :: tau_e
   real(dp), allocatable, dimension(:,:,:) :: ssa, gg
+  real(dp), allocatable, dimension(:,:,:) :: k_sw, tau_sw, ssa_sw, gg_sw
   real(dp), allocatable, dimension(:) :: dT_rad, dT_conv, net_F
   real(dp), allocatable, dimension(:) :: gw
   real(dp), allocatable, dimension(:) :: wl_e, wn_e
@@ -89,11 +99,10 @@ program Exo_FMS_RC
   real(dp) :: radius
   real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp
 
-  real(dp), allocatable, dimension(:) :: a_surf
   real(dp), allocatable, dimension(:) :: sw_up, sw_down, sw_net 
   real(dp), allocatable, dimension(:) :: lw_up, lw_down, lw_net 
 
-  real(dp), allocatable, dimension(:) :: Kzz 
+  real(dp), allocatable, dimension(:) :: Kzz, Kzz_e, Tl_rad
 
   integer :: iIC
   logical :: corr
@@ -192,16 +201,32 @@ program Exo_FMS_RC
   allocate(Tl(nlay), dT_rad(nlay), dT_conv(nlay), net_F(nlev))
   allocate(tau_e(ng,nb,nlev), k_l(ng,nb,nlay))
   allocate(ssa(ng,nb,nlay), gg(ng,nb,nlay))
+  allocate(k_sw(ng,nb,nlay), tau_sw(ng,nb,nlev), ssa_sw(ng,nb,nlay), gg_sw(ng,nb,nlay))
   allocate(VMR(nsp,nlay), mu(nlay))
   allocate(alt(nlev), mu_z_eff(nlev), alp(nlev))
   allocate(sw_up(nlev), sw_down(nlev), sw_net(nlev))
   allocate(lw_up(nlev), lw_down(nlev), lw_net(nlev))
-  allocate(a_surf(nb))
-  allocate(Kzz(nlay))
+  allocate(Kzz(nlay), Kzz_e(nlev), Tl_rad(nlay))
   allocate(cp_bar(nlay), kappa_bar(nlay), Rd_bar(nlay))
 
-  !! Set a_surf to zero for now
-  a_surf(:) = 0.0_dp
+  !! Deterministic initial values for all time-dependent fluxes and diagnostics.
+  !! These also define valid output when a radiation or adjustment scheme is
+  !! explicitly disabled, or when nstep is zero.
+  dT_rad(:) = 0.0_dp
+  dT_conv(:) = 0.0_dp
+  net_F(:) = 0.0_dp
+  sw_up(:) = 0.0_dp
+  sw_down(:) = 0.0_dp
+  sw_net(:) = 0.0_dp
+  lw_up(:) = 0.0_dp
+  lw_down(:) = 0.0_dp
+  lw_net(:) = 0.0_dp
+  Kzz(:) = 0.0_dp
+  alt(:) = 0.0_dp
+  mu_z_eff(:) = 0.0_dp
+  alp(:) = 0.0_dp
+  asr = 0.0_dp
+  olr = 0.0_dp
 
   !! Make thermo variables constabt for now
   cp_bar(:) = cp_air
@@ -238,6 +263,7 @@ program Exo_FMS_RC
   close(u)
 
   !! Time stepping loop
+  print*, 'Using: ', trim(sw_scheme), ' + ' , trim(lw_scheme)
   print*, 'Start timestepping'
 
   t_tot = 0.0_dp
@@ -249,7 +275,16 @@ program Exo_FMS_RC
   do n = 1, nstep
 
     net_F(:) = 0.0_dp
+    dT_rad(:) = 0.0_dp
     dT_conv(:) = 0.0_dp
+    sw_up(:) = 0.0_dp
+    sw_down(:) = 0.0_dp
+    sw_net(:) = 0.0_dp
+    lw_up(:) = 0.0_dp
+    lw_down(:) = 0.0_dp
+    lw_net(:) = 0.0_dp
+    asr = 0.0_dp
+    olr = 0.0_dp
 
     select case(CE_scheme)
     case('interp')
@@ -275,14 +310,18 @@ program Exo_FMS_RC
     case('ck')
 
        ! Calculate the opacity structure of the column
+       ! Longwave set (k_l, ssa, gg) and shortwave set (k_sw, ssa_sw, gg_sw) - these are the
+       ! same except with the EE mixing method, whose minor-gas weights differ per stream
        call ck_opacity(nlay, n_ck, n_CIA, n_Ray, nb, ng, wl_e, grav, Tl(:), pl(:), pe(:), mu(:), &
-         & nsp, sp_list(:), VMR(:,:), k_l(:,:,:), ssa(:,:,:), gg(:,:,:))
+         & nsp, sp_list(:), VMR(:,:), k_l(:,:,:), ssa(:,:,:), gg(:,:,:), &
+         & mu_z=mu_z, k_sw=k_sw(:,:,:), a_sw=ssa_sw(:,:,:), g_sw=gg_sw(:,:,:))
 
       ! Include optical depth component from 0 pressure, assuming constant T and p at boundary
       tau_e(:,:,1) = (k_l(:,:,1) * pe(1)) / grav
+      tau_sw(:,:,1) = (k_sw(:,:,1) * pe(1)) / grav
       do k = 1, nlay
         tau_e(:,:,k+1) = tau_e(:,:,k) + (k_l(:,:,k) * dpe(k)) / grav
-        !print*, k, k_l(1,1,k), tau_e(1,1,k+1), k_l(8,1,k), tau_e(8,1,k+1)
+        tau_sw(:,:,k+1) = tau_sw(:,:,k) + (k_sw(:,:,k) * dpe(k)) / grav
       end do
 
     case default
@@ -325,72 +364,112 @@ program Exo_FMS_RC
     select case(sw_scheme)
     case('sw_direct')
       ! Direct beam only method with no scattering
-      call sw_direct(nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, a_surf, sw_up, sw_down, sw_net, asr)
+      call sw_direct(nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, sw_up, sw_down, sw_net, asr)
     case('sw_adding')
       ! Approximate adding method with approximate scattering
-      call sw_adding(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+      call sw_adding(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_SDA')
-      ! Spherical harmonic doubling (SDA) adding four stream method with approximate scattering
-      call sw_SDA(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
-    case('sw_Toon')
+      ! Spherical harmonic doubling adding (SDA) four stream method with multiple scattering
+      call sw_SDA(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_Toon89')
       ! Toon89 shortwave method with multiple scattering
-      call sw_Toon(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
-    case('sw_SH2')
-      ! Spherical harmonic two stream method with multiple scattering
-      call sw_SH2(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
-    case('sw_SH4')
-      ! Spherical harmonic four stream method with multiple scattering
-      call sw_SH4(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+      call sw_Toon89(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_disort_ts')
       ! Two stream disort method with multiple scattering
-      call sw_disort_ts(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
-    !case('sw_disort')
-      ! n-stream disort method with multiple scattering (benchmark method)
-      !call sw_disort(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
-    case('sw_Feautier')
-      ! Feautier method
-      !call sw_Feautier(nlay, nlev, nb, ng, gw, tau_e, mu_z_eff, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)  
+      call sw_disort_ts(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_disort')
+      ! n-stream disort method with multiple scattering - benchmark method
+      call sw_disort(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_SH2')
+      ! Two stream spherical harmonic method with multiple scattering (PICASO)
+      call sw_SH2(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_SH4')
+      ! Four stream spherical harmonic method with multiple scattering (PICASO)
+      call sw_SH4(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_AD')
+      ! Adding-doubling method with multiple scattering (AddingDoublingRT)
+      call sw_AD(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+    case('sw_Liou88')
+      ! Delta-four-stream discrete ordinates method with multiple scattering (Liou et al. 1988)
+      call sw_Liou88(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('none')
+      sw_up(:) = 0.0_dp
+      sw_down(:) = 0.0_dp
+      sw_net(:) = 0.0_dp
+      asr = 0.0_dp
     case default
       print*, 'Invalid sw_scheme: ', trim(sw_scheme)
       stop
     end select
 
+    !! A gas giant has no reflecting solid surface: stellar radiation that
+    !! reaches the lower boundary leaves the modeled atmosphere downward.
+    if (trim(sw_scheme) /= 'none') then
+      if (abs(sw_up(nlev)) > 1.0e-10_dp*max(1.0_dp,sum(Finc))) then
+        print*, 'Invalid shortwave lower-boundary upward flux: ', sw_up(nlev)
+        error stop
+      end if
+    end if
+
     !! Longwave radiative transfer step
     select case(lw_scheme)
     case('lw_AA_E')
       ! Absorption approximation exponential in tau (AA_E) with approximate scattering
-      call lw_AA_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
+      call lw_AA_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_AA_L')
       ! Absorption approximation linear in tau (AA_L) with approximate scattering
-      call lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)     
+      call lw_AA_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_sc_linear')
       ! Short characteristics (sc) with linear interpolants with no scattering
-      call lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
-    case('lw_VIM')
+      call lw_sc_linear(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_sc_scat_ric')
+      ! Short characteristics (sc) discrete ordinates with multiple scattering, solved by Riccati invariant imbedding
+      call lw_sc_scat_ric(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_VIM_E')
       ! Variational Iteration Method (VIM) with approximate scattering
-      call lw_VIM(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
-    case('lw_Toon')
+      call lw_VIM_E(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_VIM_L')
+      ! Variational Iteration Method (VIM), linear in tau Planck function
+      call lw_VIM_L(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_Toon89')
       ! Toon89 longwave method with multiple scattering
-      call lw_Toon(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
+      call lw_Toon89(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_SH2')
+      ! Two-stream spherical harmonic method (PICASO) with multiple scattering
+      call lw_SH2(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_SH4')
+      ! Four-stream spherical harmonic method (PICASO) with multiple scattering
+      call lw_SH4(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_disort_ts')
       ! Two stream disort method with multiple scattering
       call lw_disort_ts(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
-    !case('lw_disort')
-      ! n-stream disort method with multiple scattering (benchmark method)
-      !call lw_disort(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
-    case('lw_Feautier')
-      ! Feautier method
-      !call lw_Feautier(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr) 
+    case('lw_disort')
+      ! n-stream disort method with multiple scattering - benchmark method
+      call lw_disort(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     case('lw_AD')
-      ! Adding-doubling method
-      !call lw_AD(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
+      ! Adding-doubling method with multiple scattering
+      call lw_AD(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_DDA')
+      ! Four-stream discrete ordinates adding method (4DDA) with multiple scattering
+      call lw_DDA(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_Fu97')
+      ! Delta-two- and four-stream combination method (Fu et al. 1997) with multiple scattering
+      call lw_Fu97(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_TAS')
+      ! Chou et al. (1999) scaling with the Tang et al. (2018) adjustment (TAS)
+      call lw_TAS(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
+    case('lw_DFE')
+      ! Absorption-only Discontinuous Finite Element (DFE) method - scattering properties are ignored
+      call lw_DFE(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, Tint, lw_up, lw_down, lw_net, olr)
     case('none')
+      lw_up(:) = 0.0_dp
+      lw_down(:) = 0.0_dp
+      lw_net(:) = 0.0_dp
+      olr = 0.0_dp
     case default
       print*, 'Invalid lw_scheme: ', trim(lw_scheme)
       stop
     end select
-
 
     !! Calculate the temperature tendency due to radiation
     net_F(:) = lw_net(:) + sw_net(:) ! Net flux into/out of level
@@ -399,16 +478,26 @@ program Exo_FMS_RC
     end do
 
     !! Convective adjustment scheme
+    !! The schemes act on the column after this step's radiative heating,
+    !! so the column is convectively stable at the end of the step
+    Tl_rad(:) = Tl(:) + t_step * dT_rad(:)
     select case(adj_scheme)
-    case('Ray_dry')
-      ! Dry convective adjustment following Ray Pierrehumbert's python script
-      call Ray_dry_adj(nlay, nlev, t_step, kappa_air, Tl, pl, pe, dT_conv)
+    case('Manabe')
+      ! Dry convective adjustment after Manabe, Smagorinsky & Strickler (1965), no iteration
+      call Manabe_dry_adjust(nlay, Tl_rad, pl, pe, kappa_air, t_step, dT_conv)
+      Kzz(:) = 1e1_dp
+    case('Pierrehumbert','Ray_dry')
+      ! Pairwise dry convective adjustment following Ray Pierrehumbert's python script
+      call Pierrehumbert_dry_adjust(nlay, Tl_rad, pl, pe, kappa_air, t_step, dT_conv)
       Kzz(:) = 1e1_dp
     case('MLT')
       ! Use mixing length theory (MLT) to time dependently adjust the adiabat and estimate Kzz
-      call MLT(nlay, nlev, t_step, Tl, pl, pe, Rd_bar, cp_bar, kappa_bar, &
-         & grav, dT_conv, Kzz)      
+      call MLT(nlay, Tl_rad, pl, pe, Rd_bar, cp_bar, grav, t_step, dT_conv, Kzz=Kzz_e)
+      ! MLT gives Kzz at the levels, output the layer average
+      Kzz(:) = 0.5_dp * (Kzz_e(1:nlay) + Kzz_e(2:nlev))
     case('none')
+      dT_conv(:) = 0.0_dp
+      Kzz(:) = 1e1_dp
     case default
       print*, 'Invalid adj_scheme: ', trim(adj_scheme)
       stop

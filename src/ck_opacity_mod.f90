@@ -1,6 +1,23 @@
 !!!
 ! Elspeth K.H. Lee (Jun 2024)
 ! A large module for calculating corr-k, cia and rayleigh opacities
+!   - Nov 2026 : Flux-weighted equivalent extinction (EE) and the RORR rebinning fix, following
+!                Exo-FMS_2 (exp/*/srcmods/ck_opacity_mod.f90)
+!
+! k-table mixing methods (ck_nml, choose one):
+!   PM   : a premixed table (one table, already per gram)
+!   RORR : random overlap with resorting and rebinning (Amundsen et al. 2017)
+!   AEE  : adaptive equivalent extinction - the major absorber's k-distribution plus the others'
+!          arithmetic band means (Amundsen et al. 2017)
+!   EE   : as AEE, but each minor gas's grey value in each layer is its k-distribution weighted
+!          by the flux each g-ordinate carries with that gas alone (Edwards 1996):
+!          w_g ~ Gw_g exp(-tau_g/mu_z) for the stellar beam (shortwave set), and for the longwave
+!          set Gw_g exp(-D tau_above) (EE_lw = 'escape') or Gw_g [exp(-D tau_above) +
+!          exp(-D tau_below)] (EE_lw = 'twoside', default), D = 1.66, tau at the layer middle
+!          for that gas alone (including the column above the model top). The major gas, the one
+!          with the largest grey optical depth from the top to where the total reaches 1, keeps
+!          its k-distribution. EE returns two opacity sets: shortwave (k_sw, a_sw, g_sw, needs
+!          mu_z) and longwave (k_tot, a_tot, g_tot); the other methods return the same set twice.
 !!!
 
 module ck_opacity_mod
@@ -91,8 +108,11 @@ module ck_opacity_mod
   character(len=250) :: wl_path
 
   ! CK table data - read in pre-calculated cm2 molecule-1 k-coefficents for each band
-  logical :: PM, RORR, AEE
-  integer :: ck_interp
+  logical :: PM, RORR, AEE, EE
+  character(len=10) :: EE_lw
+  integer :: ee_lw_kind
+  real(dp), parameter :: D_lw = 1.66_dp               ! diffusivity factor of the EE longwave weights
+  integer :: ck_interp = 2              ! 1 = (bi)linear, 2 = Bezier, for the k-tables and CIA
   integer :: n_ck
   integer, allocatable, dimension(:) :: ck_form
   type(ck_table), allocatable, dimension(:) :: ck
@@ -113,7 +133,7 @@ module ck_opacity_mod
   character(len=10), allocatable, dimension(:) :: Ray_sp
   character(len=250), allocatable, dimension(:) :: Ray_paths
 
-  namelist /ck_nml/ PM, RORR, AEE, ck_sp, ck_paths, ck_form, ck_interp
+  namelist /ck_nml/ PM, RORR, AEE, EE, EE_lw, ck_sp, ck_paths, ck_form, ck_interp
   namelist /CIA_nml/ CIA_sp, CIA_paths, CIA_form
   namelist /Ray_nml/ Ray_sp, Ray_paths, Ray_form
 
@@ -121,7 +141,7 @@ module ck_opacity_mod
 contains
 
   subroutine ck_opacity(nlay, n_ck, n_CIA, n_Ray, n_b, n_g, wl_in, grav_in, T_in, p_in, pe_in, mu_in, n_sp, sp_list, VMR, &
-    & k_tot, a_tot, g_tot)
+    & k_tot, a_tot, g_tot, mu_z, k_sw, a_sw, g_sw)
     implicit none
 
     ! What's required as input is the layer T, P, VMR
@@ -134,12 +154,20 @@ contains
     real(dp), dimension(n_sp, nlay), intent(in) :: VMR
     real(dp), dimension(n_g,n_b,nlay), intent(out) :: k_tot, a_tot, g_tot
 
-    integer :: b, g, k
+    !! Shortwave set (EE: its own minor-gas weighting with mu_z the cos(zenith angle);
+    !! the other methods: equal to k_tot, a_tot, g_tot)
+    real(dp), intent(in), optional :: mu_z
+    real(dp), dimension(n_g,n_b,nlay), intent(out), optional :: k_sw, a_sw, g_sw
+
+    integer :: b, g, k, s
     real(dp), allocatable, dimension(:,:,:), save :: k_ck_sp
     real(dp), allocatable, dimension(:,:), save :: k_ck
-    real(dp), dimension(nlay) :: k_cont, k_Ray
+    real(dp), dimension(n_ck,n_g,nlay) :: km
+    real(dp), dimension(n_g,nlay) :: k_ck_sw
+    real(dp), dimension(nlay) :: k_cont, k_Ray, dm
 
-    real(dp) :: grav
+    real(dp) :: grav, mu_sw
+    logical :: want_sw
     real(dp), dimension(nlay) :: Tl, pl, Nl, RH, mu
     real(dp), dimension(nlay+1) :: pe
 
@@ -174,6 +202,12 @@ contains
     mu(:) = mu_in(:)
     Nl(:) = (pl(:)*1e6_dp) / (kb_cgs * Tl(:))
     RH(:) = (pl(:)*1e6_dp * mu(:) * amu_cgs) / (kb_cgs * Tl(:))
+    dm(:) = (pe(2:nlay+1) - pe(1:nlay))/grav    ! layer mass [g cm-2]
+
+    want_sw = present(k_sw)
+    if (want_sw .and. EE .and. .not. present(mu_z)) stop 'ck_opacity: EE needs mu_z for k_sw'
+    mu_sw = 1.0_dp
+    if (present(mu_z)) mu_sw = max(mu_z, 1.0e-3_dp)   ! night: the shortwave set is not used
 
     ! Loop through each band - we follow various recipes from a mix of CMCRT, CHIMERA and NASA AMES
     do b = 1, n_b
@@ -200,6 +234,15 @@ contains
           !print*, b, 'AEE'
           call adap_equiv_extinction(nlay, n_ck, n_g, n_sp, grav, &
           &  pe(:), Nl(:), RH(:), VMR(:,:), k_ck_sp(:,:,:), k_ck(:,:))
+        else if (EE .eqv. .True.) then
+          ! Mass opacity of each species [cm2 g-1]
+          do k = 1, nlay
+            do s = 1, n_ck
+              km(s,:,k) = k_ck_sp(s,:,k) * VMR(ck(s)%iVMR,k) * Nl(k) / RH(k)
+            end do
+          end do
+          call flux_equiv_extinction(nlay, n_ck, n_g, km, dm, pe(1)/grav, ee_lw_kind, 0.0_dp, k_ck)
+          if (want_sw) call flux_equiv_extinction(nlay, n_ck, n_g, km, dm, pe(1)/grav, 0, mu_sw, k_ck_sw)
         else if (PM .eqv. .True.) then
           !print*, b, 'PM'
           k_ck(:,:) = k_ck_sp(1,:,:)
@@ -207,13 +250,17 @@ contains
       else
         k_ck(:,:) = 0.0_dp
       end if
+      if (.not. ((EE .eqv. .True.) .and. (n_ck > 0))) k_ck_sw(:,:) = k_ck(:,:)
 
       ! Second, interp to find  continuum opacity
       if (n_CIA > 0) then
         !print*, b, 'conti'
         do k = 1, nlay
-          !call interp_conti(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
-          call interp_conti_Bezier(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+          if (ck_interp == 1) then
+            call interp_conti(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+          else
+            call interp_conti_Bezier(n_CIA, n_sp, n_b, b, Tl(k), Nl(k), RH(k), VMR(:,k), k_cont(k))
+          end if
         end do
       else
         k_cont(:) = 0.0_dp
@@ -237,16 +284,83 @@ contains
          k_tot(g,b,:) = k_ck(g,:) + k_cont(:) + k_Ray(:) !+ k_cl_ext(b)  ! Total extinction
          a_tot(g,b,:) = min(k_Ray(:)/k_tot(g,b,:),0.99_dp) !(k_Ray + k_cl_sca(b)) / k_tot(b,g)           ! Effective single scattering albedo
          g_tot(g,b,:) = 0.0_dp !(g_cl(b)*k_cl_sca(b)) / (k_cl_sca(b) + k_Ray) ! Effective asymmetry factor
+         if (want_sw) then
+           k_sw(g,b,:) = k_ck_sw(g,:) + k_cont(:) + k_Ray(:)
+           a_sw(g,b,:) = min(k_Ray(:)/k_sw(g,b,:),0.99_dp)
+           g_sw(g,b,:) = g_tot(g,b,:)
+         end if
       end do
       !print*, b, k_ck(1), k_ck(8), k_Ray, k_cont, a_tot(b,1) , a_tot(b,8)
     end do
 
     ! MKS conversion
     k_tot(:,:,:) = k_tot(:,:,:) * 0.1_dp
+    if (want_sw) k_sw(:,:,:) = k_sw(:,:,:) * 0.1_dp
 
     !stop
 
   end subroutine ck_opacity
+
+  !! Flux-weighted equivalent extinction of one band and column (EE). km(n_ck, n_g, nlay)
+  !! [cm2/g] each gas's mass opacity, dm(nlay) layer mass [g/cm2], m_top the mass above the
+  !! top level. wkind 0: stellar beam at mu (w ~ Gw exp(-tau/mu)); 1: longwave escape
+  !! (Gw exp(-D tau_above)); 2: longwave two-sided (Gw [exp(-D tau_above) + exp(-D tau_below)]);
+  !! tau at the layer middle for that gas alone. Returns k_ck(n_g, nlay) [cm2/g]: the major
+  !! gas's k-distribution plus the others' weighted grey values.
+  subroutine flux_equiv_extinction(nlay, n_ck, n_g, km, dm, m_top, wkind, mu, k_ck)
+    implicit none
+
+    integer, intent(in) :: nlay, n_ck, n_g, wkind
+    real(dp), dimension(n_ck,n_g,nlay), intent(in) :: km
+    real(dp), dimension(nlay), intent(in) :: dm
+    real(dp), intent(in) :: m_top, mu
+    real(dp), dimension(n_g,nlay), intent(out) :: k_ck
+
+    integer :: s, k, imax
+    real(dp), dimension(n_g) :: tau_run, tau_col, tmid, lw, w, a, c
+    real(dp), dimension(n_ck,nlay) :: ke
+    real(dp), dimension(n_ck) :: tau_e
+    real(dp) :: tau_tot
+
+    do s = 1, n_ck
+      tau_col(:) = km(s,:,1)*m_top
+      do k = 1, nlay
+        tau_col(:) = tau_col(:) + km(s,:,k)*dm(k)
+      end do
+      tau_run(:) = km(s,:,1)*m_top
+      do k = 1, nlay
+        tmid(:) = tau_run(:) + 0.5_dp*km(s,:,k)*dm(k)
+        select case (wkind)
+        case (0)
+          lw(:) = -tmid(:)/mu
+        case (1)
+          lw(:) = -D_lw*tmid(:)
+        case default
+          a(:) = -D_lw*tmid(:)
+          c(:) = -D_lw*(tau_col(:) - tmid(:))
+          lw(:) = max(a(:), c(:)) + log(1.0_dp + exp(min(a(:), c(:)) - max(a(:), c(:))))
+        end select
+        w(:) = ck(s)%Gw(:) * exp(lw(:) - maxval(lw(:)))
+        ke(s,k) = sum(w(:)*km(s,:,k)) / sum(w(:))
+        tau_run(:) = tau_run(:) + km(s,:,k)*dm(k)
+      end do
+    end do
+
+    !! The major gas: largest grey optical depth from the top to where the total reaches 1
+    tau_e(:) = ke(:,1)*m_top
+    tau_tot = sum(tau_e(:))
+    do k = 1, nlay
+      if (tau_tot >= 1.0_dp) exit
+      tau_e(:) = tau_e(:) + ke(:,k)*dm(k)
+      tau_tot = sum(tau_e(:))
+    end do
+    imax = maxloc(tau_e, dim=1)
+
+    do k = 1, nlay
+      k_ck(:,k) = km(imax,:,k) + (sum(ke(:,k)) - ke(imax,k))
+    end do
+
+  end subroutine flux_equiv_extinction
 
   subroutine adap_equiv_extinction(nlay, n_ck, n_g, n_sp, grav, pe, Nl, RH, VMR, k_ck_sp, k_ck)
     implicit none
@@ -385,7 +499,7 @@ contains
       VMR_cum = VMR_tot
       VMR_tot = VMR_tot + VMR(ck(s)%iVMR)
       ! Skip this species if very low abundance
-      if (VMR(ck(s)%iVMR)*sum(k_ck_sp(s,:)*ck(s)%Gw(:)) < 1.0e-30_dp) then
+      if (VMR(ck(s)%iVMR)*sum(k_ck_sp(s,:)*ck(s)%Gw(:)) < 1.0e-99_dp) then
         cycle
       end if
       ! Loop n_g by n_g, perform random k and weight mixing following Amundsen et al. (2017)
@@ -403,24 +517,27 @@ contains
       ! Now reconstruct the x (g) coordinate
       ! Find cumulative sum of the mixed weights
       intg(0) = 0.0_dp
-      intg(1) = wt_mix(1)
-      do g = 2, n_g2
+      do g = 1, n_g2
         intg(g) = intg(g-1) + wt_mix(g)
       end do
-      ! Normalised cumulative sum of weights
-      x(:) = intg(:)/maxval(intg) !*2.0_dp - 1.0_dp !(*2 - 1 not needed here, as here weights go 0-1)
-
-      ! Note:, I belive this works in this case, as due to the larger the weight the more
-      ! likely the opacity of that x coordinate is to be sampled in a probabilistic sense
-      ! (i.e. takes up more range in the x coordinate), so the cumulative weights normalised gives the fraction of the
-      ! importance of that g-ordinate to the total opacity distribution
+      ! Each mixed k at the centre of its normalised cumulative-weight bin
+      x(1:n_g2) = (intg(0:n_g2-1) + 0.5_dp*wt_mix(:))/intg(n_g2)
 
       ! Now interpolate to the origional x grid, this is the mixed k-table.
+      ! (Exo-FMS_2 fix: the old search ran through x(0:n) via a view starting at 1, so it
+      ! interpolated between the wrong pair of cumulative weights, one bin too high)
       do g = 1, n_g
+        ! x(ix) < Gx <= x(ix+1); the end values outside
         xval = ck(s)%Gx(g)
-        call locate(x(:),xval,ix)
-        ix1 = ix + 1
-        call linear_log_interp(xval, x(ix), x(ix1), k_mix(ix), k_mix(ix1), k_ck(g))
+        call locate(x(1:n_g2), xval, ix)
+        if (ix < 1) then
+          k_ck(g) = k_mix(1)
+        else if (ix >= n_g2) then
+          k_ck(g) = k_mix(n_g2)
+        else
+          ix1 = ix + 1
+          call linear_log_interp(xval, x(ix), x(ix1), k_mix(ix), k_mix(ix1), k_ck(g))
+        end if
       end do
 
     end do
@@ -734,6 +851,14 @@ contains
         !print*, s, b, k_ff
         cycle
       end if
+      if (CIA(s)%form == 3) then
+        ! Table already on the model's bands - linear interpolation in T (as Exo-FMS_2),
+        ! table edge values outside the T range
+        k_cont = k_cont + CIA_T_linear(s, b, T) &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
+        cycle
+      end if
 
       ! If band is outside table wavelength range
       if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
@@ -850,32 +975,12 @@ contains
         cycle
       end if
       if (CIA(s)%form == 3) then
-        ! Table already interpolated to wavenumber centers - only interpolate in T
-        ! Locate required T indexes in CIA wn array for layer temperature
-        call locate(CIA(s)%T(:),T,iT)
-        iT1 = iT + 1
-        !! Perform temperature edge case check
-        if (iT < 1) then
-          k_cont = k_cont + CIA(s)%kap(b,1)  &
-            & * VMR(CIA(s)%iVMR(1)) * N &
-            & * VMR(CIA(s)%iVMR(2)) * N
-        else if (iT1 > CIA(s)%nT) then
-          k_cont = k_cont + CIA(s)%kap(b,CIA(s)%nT)  &
-            & * VMR(CIA(s)%iVMR(1)) * N &
-            & * VMR(CIA(s)%iVMR(2)) * N
-        else
-          !! Inside T range, perform interpolation
-          xval = T ; x0 = CIA(s)%T(iT) ; x1 = CIA(s)%T(iT1)
-          y0 = CIA(s)%kap(b,iT) ; y1 = CIA(s)%kap(b,iT1)
-
-          ! Perform log linear interpolation
-          call linear_interp(xval, x0, x1, y0, y1, yval)
-
-          k_cont = k_cont + yval  &
-           & * VMR(CIA(s)%iVMR(1)) * N &
-           & * VMR(CIA(s)%iVMR(2)) * N
-
-        end if
+        ! Table already on the model's bands - Bezier interpolation of log10 k in log10 T
+        ! (linear in T if the table has fewer than 3 temperatures), table edge values
+        ! outside the T range
+        k_cont = k_cont + CIA_T_Bezier(s, b, T) &
+          & * VMR(CIA(s)%iVMR(1)) * N &
+          & * VMR(CIA(s)%iVMR(2)) * N
         cycle
       end if
 
@@ -943,6 +1048,66 @@ contains
 
   end subroutine interp_conti_Bezier
 
+  !! Form 3 CIA [cm5 molecule-2] of band b at temperature T: linear in T, edge values outside
+  real(dp) function CIA_T_linear(s, b, T) result(kap)
+    implicit none
+
+    integer, intent(in) :: s, b
+    real(dp), intent(in) :: T
+
+    integer :: iT
+
+    call locate(CIA(s)%T(:), T, iT)
+    if (iT < 1) then
+      kap = CIA(s)%kap(b,1)
+    else if (iT + 1 > CIA(s)%nT) then
+      kap = CIA(s)%kap(b,CIA(s)%nT)
+    else
+      call linear_interp(T, CIA(s)%T(iT), CIA(s)%T(iT+1), CIA(s)%kap(b,iT), CIA(s)%kap(b,iT+1), kap)
+    end if
+
+  end function CIA_T_linear
+
+  !! Form 3 CIA [cm5 molecule-2] of band b at temperature T: Bezier interpolation of log10 k
+  !! in log10 T with the same 3-point stencil as the k-tables, edge values outside
+  real(dp) function CIA_T_Bezier(s, b, T) result(kap)
+    implicit none
+
+    integer, intent(in) :: s, b
+    real(dp), intent(in) :: T
+
+    integer :: iT1, iT2, iT3, nT
+    real(dp), dimension(3) :: lTa, lka
+
+    nT = CIA(s)%nT
+    if (nT < 3) then
+      kap = CIA_T_linear(s, b, T)
+      return
+    end if
+
+    if (T <= CIA(s)%T(1)) then
+      kap = CIA(s)%kap(b,1)
+      return
+    else if (T >= CIA(s)%T(nT)) then
+      kap = CIA(s)%kap(b,nT)
+      return
+    end if
+
+    ! Temperature grid index triplet, T(iT2) < T <= T(iT3) except at the first interval
+    call locate(CIA(s)%T(:), T, iT2)
+    iT1 = iT2 - 1
+    iT3 = iT2 + 1
+    if (iT1 <= 0) then
+      iT1 = 1 ; iT2 = 2 ; iT3 = 3
+    end if
+
+    lTa(:) = log10(CIA(s)%T([iT1, iT2, iT3]))
+    lka(:) = log10(max(CIA(s)%kap(b,[iT1, iT2, iT3]), 1.0e-99_dp))
+    call Bezier_interp(lTa(:), lka(:), 3, log10(T), kap)
+    kap = 10.0_dp**kap
+
+  end function CIA_T_Bezier
+
   subroutine calc_Rayleigh(n_Ray, n_sp, b, Nl, RH, VMR, k_Ray)
     implicit none
 
@@ -998,7 +1163,26 @@ contains
       !! read in ck data and prep
       allocate(ck_sp(n_ck), ck_paths(n_ck), ck(n_ck), ck_form(n_ck))
       ! Read ck namelist variables
+      PM = .False.
+      RORR = .False.
+      AEE = .False.
+      EE = .False.
+      EE_lw = 'twoside'
+      ck_interp = 2
       read(u_nml, nml=ck_nml)
+      if (count([PM, RORR, AEE, EE]) /= 1) then
+        print*, 'ck_nml: choose exactly one of PM, RORR, AEE, EE'
+        stop
+      end if
+      select case (trim(EE_lw))
+      case ('escape')
+        ee_lw_kind = 1
+      case ('twoside')
+        ee_lw_kind = 2
+      case default
+        print*, 'ck_nml: invalid EE_lw (escape or twoside): ', trim(EE_lw)
+        stop
+      end select
       ck(:)%sp = ck_sp(:)
       ck(:)%path = ck_paths(:)
       ! Find index for VMR
@@ -1074,6 +1258,10 @@ contains
           allocate(ck(s)%P(ck(s)%nP),ck(s)%lP(ck(s)%nP))
           allocate(ck(s)%Gx(ck(s)%nG), ck(s)%Gw(ck(s)%nG))
 
+          if ((ck_interp == 2) .and. ((ck(s)%nT < 3) .or. (ck(s)%nP < 3))) then
+            print*, 'Bezier k-table interpolation (ck_interp = 2) needs >= 3 T and P points: ', trim(ck(s)%sp)
+            stop
+          end if
           read(u,*) ck(s)%T(:)
             !print*, i, ck(s)%T(:)
           ck(s)%lT(:) = log10(ck(s)%T(:))
@@ -1677,7 +1865,15 @@ contains
     real(dp), intent(in) :: x
     real(dp), intent(out) :: y
 
-    real(dp) :: dx, dx1, dy, dy1, ww, yc, t, wlim, wlim1
+    real(dp) :: dx, dx1, dy, dy1, ww, yc, t
+
+    !! Monotonic quadratic Bezier interpolation through 3 points: the control point is set
+    !! from the weighted 3-point derivative at xi(2); if that control point is not strictly
+    !! between the interval's end values (overshoot, a local extremum or a flat interval),
+    !! the one-sided slope is used instead (ww = 1), which gives linear interpolation.
+    !! (Nov 2026: the limiter was the equivalent bound on ww, which divided by the slope
+    !! ratio and gave 1/0 for linear data and 0/0 for flat data; x outside [xi(1), xi(3)]
+    !! now gives the end value rather than extrapolating the quadratic.)
 
     !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
     dx = xi(2) - xi(1)
@@ -1685,29 +1881,25 @@ contains
     dy = yi(2) - yi(1)
     dy1 = yi(3) - yi(2)
 
-    if (x > xi(1) .and. x < xi(2)) then
+    if (x <= xi(2)) then
       ! left hand side interpolation
-      !print*,'left'
       ww = dx1/(dx + dx1)
-      wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if ((ww <= min(wlim,wlim1)) .or. (ww >= max(wlim,wlim1))) then
-        ww = 1.0_dp
-      end if
       yc = yi(2) - dx/2.0_dp * (ww*dy/dx + (1.0_dp - ww)*dy1/dx1)
-      t = (x - xi(1))/dx
-      y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
-    else ! (x > xi(2) and x < xi(3)) then
-      ! right hand side interpolation
-      !print*,'right'
-      ww = dx/(dx + dx1)
-      wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if ((ww <= min(wlim,wlim1)) .or. (ww >= max(wlim,wlim1))) then
+      if ((yc <= min(yi(1),yi(2))) .or. (yc >= max(yi(1),yi(2)))) then
         ww = 1.0_dp
+        yc = yi(2) - dx/2.0_dp * (dy/dx)
       end if
+      t = min(max((x - xi(1))/dx, 0.0_dp), 1.0_dp)
+      y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
+    else
+      ! right hand side interpolation
+      ww = dx/(dx + dx1)
       yc = yi(2) + dx1/2.0_dp * (ww*dy1/dx1 + (1.0_dp - ww)*dy/dx)
-      t = (x - xi(2))/(dx1)
+      if ((yc <= min(yi(2),yi(3))) .or. (yc >= max(yi(2),yi(3)))) then
+        ww = 1.0_dp
+        yc = yi(2) + dx1/2.0_dp * (dy1/dx1)
+      end if
+      t = min(max((x - xi(2))/dx1, 0.0_dp), 1.0_dp)
       y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
     end if
 

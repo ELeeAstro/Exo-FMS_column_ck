@@ -1,166 +1,208 @@
+!!!
+! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Oct 2026 : Rewritten from Exo-FMS_2 (fluxes at the interfaces, flux limiter, overshoot)
+!
+! conv: Mixing length theory (MLT) dry convection (Robinson & Marley 2014; Joyce & Tayar 2023)
+!       Finds the convective heat flux at each interface where the gradient is superadiabatic,
+!       and the temperature tendency from its divergence. Also returns Kzz, with convective
+!       overshoot above each convective zone (Woitke et al. 2020).
+!       The flux is limited so the column relaxes towards, but never past, the adiabat.
+!     Pros: Time dependent convection, gives Kzz for tracer mixing, enthalpy conserving
+!     Cons: Not instant (column is only near adiabatic after the convective timescale), slower than adjustment
+!
+! Rd and cp can be scalars or given per layer (Rd(nlay), cp(nlay)).
+! Kzz and w_osh are returned at the levels (pe).
+!!!
+
 module MLT_mod
-  use, intrinsic :: iso_fortran_env ! Requires fortran 2008
-  use WENO4_mod, only : interpolate_weno4  
+  use, intrinsic :: iso_fortran_env
   implicit none
 
+  !! Precision variables
   integer, parameter :: dp = REAL64
-
-  real(dp), parameter :: alp = 1.0_dp, beta = 2.2_dp
-  real(dp), parameter :: dt_max = 0.5_dp
-  real(dp), parameter :: Kzz_min = 1e1_dp ! Minimum Kzz (typically 1e5 cm2 s-1)
-  real(dp), parameter :: Kzz_max = 1e8_dp ! Maximum Kzz
-
-  real(dp), parameter :: f1 = 1.0_dp/8.0_dp, f2 = 1.0_dp/2.0_dp
-
+  private
   public :: MLT
+
+  !! Rd, cp scalars or per layer. Per layer, interface k uses the mean of its two layers for
+  !! Rd, cp and kappa, while each layer's heating uses its own cp (so sum cp T dp is conserved)
+  interface MLT
+    module procedure MLT_scalar, MLT_layer
+  end interface MLT
+
+  !! MLT parameters
+  real(dp), parameter :: alpha_default = 1.0_dp   ! mixing length / pressure scale height
+  real(dp), parameter :: beta_default  = 2.2_dp   ! overshoot decay exponent (Woitke et al. 2020)
+  real(dp), parameter :: dt_sub_max_default = 10.0_dp  ! maximum substep [s]
+  real(dp), parameter :: Kzz_min = 1.0e1_dp       ! minimum Kzz [m2/s] (1e5 cm2/s)
+  real(dp), parameter :: Kzz_max = 1.0e8_dp       ! maximum Kzz [m2/s]
+  real(dp), parameter :: f1 = 1.0_dp/8.0_dp, f2 = 0.5_dp
+  real(dp), parameter :: limit_frac = 0.5_dp      ! fraction of the pair-neutralising flux allowed
 
 contains
 
-  subroutine MLT(nlay, nlev, t_end, Tl, pl, pe, Rd_air, cp_air, kappa_air, &
-    & grav, dT_conv, Kzz)
-    implicit none
+  !! Constant Rd and cp: call the per layer version with uniform arrays
+  subroutine MLT_scalar(nlay, Tl, pl, pe, Rd, cp, grav, dt, dT_conv, Kzz, w_osh, alpha, beta, nsub, dt_sub_max)
+    integer, intent(in) :: nlay
+    real(dp), dimension(nlay),   intent(in) :: Tl, pl
+    real(dp), dimension(nlay+1), intent(in) :: pe
+    real(dp), intent(in) :: Rd, cp, grav, dt
+    real(dp), dimension(nlay), intent(out) :: dT_conv
+    real(dp), dimension(nlay+1), intent(out), optional :: Kzz
+    real(dp), dimension(nlay+1), intent(out), optional :: w_osh
+    real(dp), intent(in), optional :: alpha, beta, dt_sub_max
+    integer, intent(in), optional :: nsub
 
-    integer, intent(in) :: nlay, nlev
-    real(dp), dimension(nlay), intent(in) :: Rd_air, cp_air, kappa_air
-    real(dp) ::  grav, t_end
-    real(dp), dimension(nlay), intent(in) :: pl
-    real(dp), dimension(nlev), intent(in) :: pe
+    real(dp), dimension(nlay) :: Rd_l, cp_l
 
-    real(dp), dimension(nlay), intent(in) :: Tl
-    real(dp), dimension(nlay), intent(out) :: dT_conv, Kzz
+    Rd_l(:) = Rd
+    cp_l(:) = cp
+    call MLT_layer(nlay, Tl, pl, pe, Rd_l, cp_l, grav, dt, dT_conv, Kzz, w_osh, alpha, beta, nsub, dt_sub_max)
+  end subroutine MLT_scalar
 
-    integer :: k, ncall, krcb
-    real(dp) :: Hp, L, rho, t_now, dt, w, w_over, w_rcb
-    real(dp), dimension(nlay) :: gradrad, Fc, Tl_c
-    real(dp), dimension(nlev) :: Fc_e, Te
-    real(dp), dimension(nlay) :: Kzz_av, Kzz_ov
+  subroutine MLT_layer(nlay, Tl, pl, pe, Rd, cp, grav, dt, dT_conv, Kzz, w_osh, alpha, beta, nsub, dt_sub_max)
+    integer, intent(in) :: nlay
+    real(dp), dimension(nlay),   intent(in) :: Tl, pl
+    real(dp), dimension(nlay+1), intent(in) :: pe
+    real(dp), dimension(nlay),   intent(in) :: Rd, cp     ! [J/kg/K] per layer
+    real(dp), intent(in) :: grav, dt
+    real(dp), dimension(nlay), intent(out) :: dT_conv
+    real(dp), dimension(nlay+1), intent(out), optional :: Kzz     ! [m2/s] at the levels
+    real(dp), dimension(nlay+1), intent(out), optional :: w_osh   ! overshoot velocity [m/s] at the levels
+    real(dp), intent(in), optional :: alpha   ! mixing length / Hp (default 1)
+    real(dp), intent(in), optional :: beta    ! overshoot exponent (default 2.2)
+    integer, intent(in), optional :: nsub     ! minimum number of substeps (default 1)
+    real(dp), intent(in), optional :: dt_sub_max   ! maximum substep [s] (default 10)
 
-    !! Save the input temperature into copy
-    Tl_c(:) = Tl(:)
+    integer :: k, isub, ns
+    real(dp) :: al, be, dt_sub, Fmax, dsm
+    real(dp), dimension(nlay) :: T, d_p, dT_s, kap_l
+    real(dp), dimension(nlay+1) :: Fc, F_mlt, w, grad, T_e, Kzz_e, w_o, Kzz_acc, w_acc
+    real(dp), dimension(nlay+1) :: Rd_e, cp_e, kap_e   ! at the interfaces 2..nlay
+    logical :: want_kzz
+    real(dp), dimension(nlay-1) :: pfact
+    logical, dimension(nlay+1) :: conv
 
-    !! Loop over time until we reach t_end
-    t_now = 0.0_dp
-    ncall = 0
-    Kzz_av(:) = 0.0_dp
-    do while (t_now < t_end)
+    al = alpha_default;  if (present(alpha)) al = alpha
+    be = beta_default;   if (present(beta)) be = beta
+    dsm = dt_sub_max_default;  if (present(dt_sub_max)) dsm = dt_sub_max
 
-      !! Calculate the timestep
-      if ((t_now + dt_max) >= t_end) then
-        dt = t_end - t_now
-      else
-        dt = dt_max
-      end if
+    !! Number of substeps (at most dt_sub_max each, at least nsub)
+    ns = max(1, ceiling(dt/dsm))
+    if (present(nsub)) ns = max(ns, nsub)
+    dt_sub = dt/real(ns, dp)
 
-      !! Use WENO4 method to (smoothly) interpolate layers to levels
-      Te(:) = interpolate_weno4(pe, pl, Tl_c, .False.)
+    !! Gas properties at the interfaces - mean of the two layers
+    kap_l(:) = Rd(:)/cp(:)
+    Rd_e(:) = Rd(1);  cp_e(:) = cp(1);  kap_e(:) = kap_l(1)
+    Rd_e(2:nlay)  = 0.5_dp*(Rd(1:nlay-1) + Rd(2:nlay))
+    cp_e(2:nlay)  = 0.5_dp*(cp(1:nlay-1) + cp(2:nlay))
+    kap_e(2:nlay) = 0.5_dp*(kap_l(1:nlay-1) + kap_l(2:nlay))
 
-      !! Edges are linearly interpolated to avoid overshoot
-      Te(1) = 10.0_dp**(log10(Tl_c(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl_c(1)/Te(2)))
-      Te(nlev) = 10.0_dp**(log10(Tl_c(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl_c(nlay)/Te(nlay)))
+    !! Layer pressure thickness and neutral pair factor: T(k-1) = T(k) pfact(k-1) is neutral
+    d_p(:) = pe(2:nlay+1) - pe(1:nlay)
+    pfact(:) = (pl(1:nlay-1)/pl(2:nlay))**kap_e(2:nlay)
+    T(:) = Tl(:)
+    want_kzz = present(Kzz) .or. present(w_osh)
+    Kzz_acc(:) = 0.0_dp;  w_acc(:) = 0.0_dp
 
+    !! Explicit substeps
+    do isub = 1, ns
+      call interface_state(T, grad, T_e, conv, w, F_mlt)
 
-      !! Calculate the regions that are convectivly unstable
-      do k = nlay, 1, -1 
-        gradrad(k) = log(Te(k)/Te(k+1))/log(pe(k)/pe(k+1))
+      !! Limit each flux to limit_frac of the flux that would mix its pair to neutral in dt_sub
+      Fc(:) = F_mlt(:)
+      do k = 2, nlay
+        if (.not. conv(k)) cycle
+        Fmax = (cp(k-1)/grav)*d_p(k-1)*(pair_neutral_upper(k) - T(k-1))/dt_sub
+        Fc(k) = min(Fc(k), limit_frac*max(Fmax, 0.0_dp))
       end do
 
-      !! Follow the Joyce & Tayar (2023), Marley & Robinson (2015) and
-      !Robinson & Marley (2014) formalisims
+      !! Kzz and overshoot of this substep, with the velocity of the flux actually carried (F ~ w^3)
+      if (want_kzz) then
+        do k = 2, nlay
+          if (conv(k) .and. F_mlt(k) > 0.0_dp) w(k) = w(k)*(Fc(k)/F_mlt(k))**(1.0_dp/3.0_dp)
+        end do
+        call kzz_overshoot(conv, w, T_e, Kzz_e, w_o)
+        Kzz_acc(:) = Kzz_acc(:) + Kzz_e(:)
+        w_acc(:) = w_acc(:) + w_o(:)
+      end if
+
+      !! Heating from the flux divergence
       do k = 1, nlay
-
-        ! Scale height and char. length scale of layer
-        Hp = (Rd_air(k) * Tl_c(k)) / grav
-        L = alp * Hp
-
-        if (gradrad(k) > kappa_air(k)) then
-          ! Convective region, calculate convective flux
-
-          ! Buoyancy characteristic vertical velocity Robinson & Marley (2014)
-          w = (f1 * L**2 * grav * (gradrad(k) - kappa_air(k))) / Hp
-          w = sqrt(w)
-          ! Vertical convective thermal flux (Joyce & Tayar 2023)
-          rho = pl(k)/(Rd_air(k) * Tl_c(k))
-          Fc(k) = f2 * (rho * cp_air(k) * w * Tl_c(k) * L * (gradrad(k) - kappa_air(k)))/Hp
-
-        else
-          ! Convective flux is not adjusted
-          Fc(k) = 0.0_dp
-          w = 0.0_dp
-        end if
-
-        ! Keep running total of the Kzz value for this layer
-        Kzz_av(k) = Kzz_av(k) + w * L        
-
+        dT_s(k) = (grav/cp(k))*(Fc(k+1) - Fc(k))/d_p(k)
       end do
+      T(:) = T(:) + dt_sub*dT_s(:)
+    end do
 
-      !! Use WENO4 method to (smoothly) interpolate layers to levels
-      Fc_e(:) = interpolate_weno4(pe, pl, Fc, .False.)
+    dT_conv(:) = (T(:) - Tl(:))/dt
 
-      !! Edges are linearly extrapolted (or equal 0)
-      Fc_e(1) = 0.0_dp !(Fc(1) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * (Fc(1) - Fc_e(2)))
-      Fc_e(nlev) = 0.0_dp !(Fc(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * (Fc(nlay) - Fc_e(nlay))
+    !! Kzz and overshoot velocity averaged over the substeps
+    if (present(Kzz)) Kzz(:) = min(Kzz_acc(:)/real(ns, dp), Kzz_max)
+    if (present(w_osh)) w_osh(:) = w_acc(:)/real(ns, dp)
 
-      !! Calculate the temperature tendency due to radiation
-      do k = 1, nlay
-        dT_conv(k) = (grav/cp_air(k)) * (Fc_e(k+1)-Fc_e(k))/(pe(k+1) - pe(k))
-        !print*, n, i, dT_conv(k)
+  contains
+
+    !! Kzz at the interfaces (w L where convective, Kzz_min elsewhere) and overshoot (L w_osh)
+    !! above the top of each convective zone, up to the next zone above
+    subroutine kzz_overshoot(conv_i, w_i, T_i, Kzz_i, wo_i)
+      logical, dimension(nlay+1), intent(in) :: conv_i
+      real(dp), dimension(nlay+1), intent(in)  :: w_i, T_i
+      real(dp), dimension(nlay+1), intent(out) :: Kzz_i, wo_i
+      integer :: i, it
+      real(dp) :: Hp, wov
+      Kzz_i(:) = Kzz_min
+      wo_i(:) = 0.0_dp
+      do i = 2, nlay
+        if (conv_i(i)) Kzz_i(i) = max(w_i(i)*al*Rd_e(i)*T_i(i)/grav, Kzz_min)
       end do
+      do it = 2, nlay
+        if (.not. conv_i(it)) cycle
+        if (conv_i(it-1)) cycle                            ! not the top of its zone
+        do i = it-1, 2, -1
+          if (conv_i(i)) exit
+          Hp = Rd_e(i)*T_i(i)/grav
+          wov = w_i(it)*(pe(i)/pe(it))**be
+          wo_i(i) = max(wo_i(i), wov)
+          Kzz_i(i) = max(Kzz_i(i), al*Hp*wov)
+        end do
+      end do
+      ! Bottom level has no interface below it, use the value of the level above
+      Kzz_i(nlay+1) = Kzz_i(nlay)
+    end subroutine kzz_overshoot
 
-      !! Forward march the temperature change copy   
-      Tl_c(:) = Tl_c(:) + dt * dT_conv(:)
-
-      !! Add dt to the time
-      t_now = t_now + dt
-      ncall = ncall + 1
-
-    end do
-
-    Kzz_av(:) = Kzz_av(:)/real(ncall,dp)
-
-    !! Calculate the overshoot component - assume from end state (no running average)
-
-    !! First find the rcb boundary 
-    krcb = nlay
-    w_rcb = 1e-30_dp
-    do k = nlay, 1, -1
-      if (Fc(k) > 0.0_dp) then
-        krcb = k
-      else
-        krcb = k+1
-        Hp = (Rd_air(krcb) * Tl_c(krcb)) / grav
-        L = alp * Hp
-        w_rcb = (f1 * L**2 * grav * (gradrad(krcb) - kappa_air(krcb))) / Hp
-        w_rcb = sqrt(w_rcb)
-        exit
-      end if
-    end do
-
-    !! Now calculate the overshoot component
-    Kzz_ov(:) = 0.0_dp
-    do k = nlay, 1, -1
-      if (k >= krcb) then
-        !! In covective region - do not add overshoot
-      else
-        !! In overshoot region, add overshoot component
-        w_over = exp(log(w_rcb) - beta * max(0.0_dp, log(pl(krcb)/pl(k))))
-        Hp = (Rd_air(k) * Tl_c(k)) / grav
-        L = alp * Hp
-        Kzz_ov(k) = w_over * L
-        if (Kzz_ov(k) < Kzz_min) then
-          exit
+    !! Gradient, temperature, convective flag, velocity and MLT flux at the interfaces
+    subroutine interface_state(Tc, grad_i, T_i, conv_i, w_i, F_i)
+      real(dp), dimension(nlay),   intent(in)  :: Tc
+      real(dp), dimension(nlay+1), intent(out) :: grad_i, T_i, w_i, F_i
+      logical, dimension(nlay+1), intent(out) :: conv_i
+      integer :: i
+      real(dp) :: Hp, L, rho
+      grad_i(:) = 0.0_dp;  w_i(:) = 0.0_dp;  F_i(:) = 0.0_dp;  conv_i(:) = .false.
+      T_i(1) = Tc(1);  T_i(nlay+1) = Tc(nlay)
+      do i = 2, nlay
+        grad_i(i) = log(Tc(i-1)/Tc(i))/log(pl(i-1)/pl(i))
+        T_i(i) = Tc(i-1)*(pe(i)/pl(i-1))**grad_i(i)      ! power law through both layers
+        if (grad_i(i) > kap_e(i)) then
+          conv_i(i) = .true.
+          Hp = Rd_e(i)*T_i(i)/grav
+          L = al*Hp
+          rho = pe(i)/(Rd_e(i)*T_i(i))
+          w_i(i) = sqrt(f1*L**2*grav*(grad_i(i) - kap_e(i))/Hp)
+          F_i(i) = f2*rho*cp_e(i)*T_i(i)*w_i(i)*al*(grad_i(i) - kap_e(i))
         end if
-      end if
-    end do
+      end do
+    end subroutine interface_state
 
-    !! Make sure Kzz is above minimum value
-    Kzz(:) = max(Kzz_av(:) + Kzz_ov(:),Kzz_min)
+    !! Temperature of layer i-1 after mixing layers i-1 and i to neutral, conserving the
+    !! enthalpy of the pair (r = cp(i)/cp(i-1), 1 for constant cp)
+    real(dp) function pair_neutral_upper(i)
+      integer, intent(in) :: i
+      real(dp) :: Tlow, r
+      r = cp(i)/cp(i-1)
+      Tlow = (d_p(i-1)*T(i-1) + r*d_p(i)*T(i))/(r*d_p(i) + pfact(i-1)*d_p(i-1))
+      pair_neutral_upper = Tlow*pfact(i-1)
+    end function pair_neutral_upper
 
-    !! Make sure Kzz is smaller than the maximum value
-    Kzz(:) = min(Kzz(:),Kzz_max)
-
-    !! Pass back the net temperature tendency
-    dT_conv(:) = (Tl_c(:) - Tl(:))/t_end
-
-  end subroutine MLT
+  end subroutine MLT_layer
 
 end module MLT_mod

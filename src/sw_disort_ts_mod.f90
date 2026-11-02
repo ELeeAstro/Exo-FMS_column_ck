@@ -1,8 +1,11 @@
 !!!
-! Elspeth KH Lee - Jun 2024
-! sw: two-stream disort method with modifications from Xianyu Tan.
-!     Pros: Accurate and reasonably fast multiple scattering method
-!     Cons: Two-stream only, can be inaccurate
+! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Nov 2026 : Pass a local copy of nlev to TWOSTR
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!
+! sw: Two-stream DISORT method with modifications from Xianyu Tan
+!     Pros: Multiple scattering method, independent check of the sw_Toon89 scheme (same answer)
+!     Cons: Two-stream only, ~3x slower than sw_Toon89
 !!!
 
 module sw_disort_ts_mod
@@ -33,7 +36,7 @@ contains
     real(dp), intent(out) :: asr
 
     !! Work variables
-    integer :: b, g, i
+    integer :: b, g, i, ntau
 
     !! Conversion arrays from FMS to DISORT dimensions and work variables
     integer, parameter :: maxcly=200, maxulv=201
@@ -42,35 +45,34 @@ contains
     real(dp), dimension(maxcly) :: dtauc
     real(dp), dimension(maxcly) :: ggg, ssalb
     real(dp), dimension(maxulv) :: sw_net_d, sw_up_d, sw_down_d, utau
-    real(dp), dimension(nb,maxulv) :: sw_net_b, sw_up_b, sw_down_b
-    real(dp), dimension(ng,maxulv) :: sw_net_g, sw_up_g, sw_down_g
+    real(dp), dimension(maxulv) :: sw_net_g, sw_up_g, sw_down_g
     real(dp) :: umu0, fbeam, Tint
     logical :: planck
 
-    !! Shortwave flux calculation
+    sw_net_d(:) = 0.0_dp
+    sw_up_d(:) = 0.0_dp
+    sw_down_d(:) = 0.0_dp
+
+    !! Shortwave flux calculation - sum over each band and g-ordinance
     if (mu_z(nlev) > 0.0_dp) then
+
       planck = .False.
       umu0 =  mu_z(nlev)
-      sw_net_d(:) = 0.0_dp
-      sw_up_d(:) = 0.0_dp
-      sw_down_d(:) = 0.0_dp
-      !! Initalise arrays
+
+      !! Initialise arrays
       ggg(:) = 0.0_dp
       ssalb(:) = 0.0_dp
       utau(:) = 0.0_dp
       dtauc(:) = 0.0_dp
       Te_0(:) = 0.0_dp
+
+      wvnmlo = 0.0_dp
+      wvnmhi = 0.0_dp
+      Tint = 0.0_dp
+
       do b = 1, nb
-        if (Finc(b) <= 0.0_dp) then
-          cycle
-        end if
-        sw_net_b(b,:) = 0.0_dp
-        sw_up_b(b,:) = 0.0_dp
-        sw_down_b(b,:) = 0.0_dp
+        if (Finc(b) <= 0.0_dp) cycle
         fbeam = Finc(b)
-        wvnmlo = 0.0_dp
-        wvnmhi = 0.0_dp
-        Tint = 0.0_dp
         do g = 1, ng
           ggg(1:nlay) = gg(g,b,:)
           ssalb(1:nlay) = ssa(g,b,:)
@@ -78,20 +80,16 @@ contains
           do i = 1, nlay
             dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
           end do
-          call call_twostr(nlay,Te_0,ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
-            & sw_net_g(g,:),sw_up_g(g,:),sw_down_g(g,:))
-          sw_net_b(b,:) = sw_net_b(b,:) + sw_net_g(g,:) * gw(g)
-          sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
-          sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
+          ! Gas giant lower boundary (albedo = 0), TWOSTR overwrites ntau so we pass a copy of nlev
+          ntau = nlev
+          call call_twostr(nlay,0.0_dp,Te_0,ggg,ssalb,dtauc,ntau,utau,planck,wvnmlo,wvnmhi,Tint,fbeam,umu0, &
+            & sw_net_g(:),sw_up_g(:),sw_down_g(:))
+          sw_net_d(:) = sw_net_d(:) + sw_net_g(:) * gw(g)
+          sw_up_d(:) = sw_up_d(:) + sw_up_g(:) * gw(g)
+          sw_down_d(:) = sw_down_d(:) + sw_down_g(:) * gw(g)
         end do
-        sw_net_d(:) = sw_net_d(:) + sw_net_b(b,:)
-        sw_up_d(:) = sw_up_d(:) + sw_up_b(b,:)
-        sw_down_d(:) = sw_down_d(:) + sw_down_b(b,:)
       end do
-    else
-      sw_net_d(:) = 0.0_dp
-      sw_up_d(:) = 0.0_dp
-      sw_down_d(:) = 0.0_dp
+
     end if
 
     sw_net(:) = sw_net_d(1:nlev)

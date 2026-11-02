@@ -1,26 +1,67 @@
 !!!
-! Elspeth KH Lee - Jun 2024
-! sw: n-stream disort method 
-!     Pros: Highly Accurate, benchmark method
-!     Cons: Extreamly slow - Can't do internal temperature properly (needs modification) - so just use net method
+! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Jul 2025 : n-stream DISORT 4.0.99, gas-giant lower boundary
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!
+! lw: n-stream DISORT method - intended as an accuracy benchmark
+!     Pros: Highly accurate reference solution, arbitrary stream number
+!     Cons: Very slow compared to the two-stream methods
+!
+! Lower boundary
+! --------------
+! DISORT is written for a planetary surface, so its lower boundary emits
+! sigma*BTEMP**4 and reflects with albedo ALBEDO. A gas giant has no surface -
+! the requirement is instead that the interior supplies a prescribed NET
+! upward flux,
+!
+!     F_up(nlev) - F_down(nlev) = sigma*Tint**4 (in-band: pi*B_band(Tint) for each band and g-ordinance),
+!
+! with downwelling radiation absorbed rather than reflected.
+!
+! We impose this on the *unmodified* DISORT by exploiting the linearity of the
+! radiative transfer equation in its source terms. With ALBEDO = 0 the only
+! boundary source is the lower-boundary emission x = B(BTEMP), and every flux
+! is an affine function of it,
+!
+!     F(x) = P + Q*x.
+!
+! Two DISORT calls with different BTEMP therefore determine the whole family,
+! and the combination
+!
+!     F = F1 + alpha*(F2 - F1),    alpha = (Fint - net1) / (net2 - net1)
+!
+! is the exact solution carrying the same atmospheric Planck sources (their
+! weight is (1-alpha) + alpha = 1) and whatever lower-boundary emission is
+! needed to hit the required net flux. No modification of DISORT is required,
+! which matters for a routine whose purpose is to be a trustworthy reference.
 !!!
 
 module lw_disort_mod
   use, intrinsic :: iso_fortran_env
-  use WENO4_mod, only : interpolate_weno4  
+  use WENO4_mod, only : interpolate_weno4
+  use BB_integrate_mod, only : BB_integrate
   implicit none
 
   !! Precision variables
-  integer, parameter :: sp = REAL32
   integer, parameter :: dp = REAL64
 
-  real(dp), parameter :: sb = 5.670374419e-8_dp
+  !! Required constants
+  real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
 
-  private :: call_DISORT
-  public :: lw_DISORT
+  !! Number of computational streams used by DISORT.
+  !! Increase for a more accurate benchmark, at proportionally more cost.
+  !! You will need to make clean and recompile if this is changed.
+  integer, parameter :: nstr = 32
+
+  !! Use the delta-M+ truncation (Lin et al. 2018). DISORT applies its own
+  !! guards internally and falls back to plain delta-M where the moment
+  !! sequence makes the delta-M+ fit unreliable (DISORT.f:482-497).
+  logical, parameter :: use_deltamplus = .True.
+
+  private
+  public :: lw_disort
 
 contains
-
 
   subroutine lw_disort(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     implicit none
@@ -39,168 +80,183 @@ contains
     real(dp), dimension(nlev), intent(out) :: lw_up, lw_down, lw_net
     real(dp), intent(out) :: olr
 
-
     !! Work variables
-    integer :: b, g, i
+    integer :: b, g
     real(dp), dimension(nlev) :: Te
+    real(dp), dimension(nlev) :: up1, dn1, up2, dn2
+    real(dp), dimension(nb) :: be_int
+    real(dp) :: Tbot1, Tbot2, net1, net2, alp, denom, Fint
 
-    !! Conversion arrays from FMS to DISORT dimensions and work variables
-    real(sp), dimension(0:nlay) :: Te_0
-    real(sp) :: wvnmlo, wvnmhi
-    real(sp), dimension(nlay) :: dtauc
-    real(sp), dimension(nlev) :: utau
-    real(sp), dimension(nlay) :: ggg, ssalb
-    real(dp), dimension(nlev) :: lw_net_d
-    real(dp), dimension(nb,nlev) :: lw_net_b
-    real(dp), dimension(ng,nlev) :: lw_net_g
-    real(sp) :: umu0, fbeam, Tint_sp
-    real(dp) :: olr_g
-    logical :: planck
+    !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
+    Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
 
+    !! Edges are linearly extrapolated in log(p)-log(T) space.
+    Te(1) = 10.0_dp**(log10(Te(2)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * &
+      & log10(Tl(1)/Te(2)))
+    Te(nlev) = 10.0_dp**(log10(Te(nlay)) + (log10(pe(nlev)/pe(nlay))/ &
+      & log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
 
-    !! Use WENO4 method to (smoothly) interpolate layers to levels
-    Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
+    !! Integrated planck function intensity for internal temperature in each band
+    call BB_integrate(nb, Tint, wn_e, be_int)
 
-    !! Edges are linearly interpolated to avoid overshoot
-    Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-    Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+    !! Two lower-boundary emission temperatures spanning the solution family.
+    !! They are scaled to the deepest atmospheric temperature so the pair stays
+    !! well separated and well conditioned for any Tint, including Tint = 0.
+    Tbot1 = Te(nlev)
+    Tbot2 = Te(nlev) * 2.0_dp**0.25_dp
 
-    Te_0(:) = 0.0_dp
-    Te_0(0:nlay) = real(Te(1:nlev))
-
-    !! Longwave two-stream flux calculation
-    planck = .True.
-    fbeam = 0.0_sp
-    umu0 = 0.0_sp
-    lw_net_d(:) = 0.0_dp
-    olr = 0.0_dp
-    ggg(:) = 0.0_sp
-    ssalb(:) = 0.0_sp
-    utau(:) = 0.0_sp
-    dtauc(:) = 0.0_sp
-    Tint_sp = Tint
-    do b = 1, nb
-      lw_net_b(b,:) = 0.0_dp
-      wvnmlo = real(wn_e(b+1))
-      wvnmhi = real(wn_e(b))
-      do g = 1, ng
-        do i = 1, nlay
-          ggg(i) = real(gg(g,b,i))
-          ssalb(i) = real(ssa(g,b,i))
-          dtauc(i) = real((tau_e(g,b,i+1) - tau_e(g,b,i)))
-        end do
-        do i = 1, nlev
-          utau(i) = real(tau_e(g,b,i))
-        end do
-        call call_DISORT(nlay,real(Te),ggg,ssalb,dtauc,nlev,utau,planck,wvnmlo,wvnmhi,real(Tint),fbeam,umu0,lw_net_g(g,:),olr_g)
-        lw_net_b(b,:) = lw_net_b(b,:) + lw_net_g(g,:) * gw(g)
-        olr = olr + olr_g * gw(g)
-      end do
-      lw_net_d(:) = lw_net_d(:) + lw_net_b(b,:)
-    end do
-
-    lw_net(:) = lw_net_d(1:nlev)
+    !! Sum over each band and g-ordinance
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
+    do b = 1, nb
 
-    !! Apply net internal flux at lower boundary
-    !lw_net(nlev) = sb * Tint**4
+      !! Required in-band net internal flux
+      Fint = pi * be_int(b)
+
+      do g = 1, ng
+
+        call call_DISORT(nlay, nlev, Te, tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), wn_e(b+1), wn_e(b), &
+          & Tbot1, up1, dn1)
+        call call_DISORT(nlay, nlev, Te, tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), wn_e(b+1), wn_e(b), &
+          & Tbot2, up2, dn2)
+
+        !! Solve for the lower-boundary emission that delivers the internal flux
+        net1 = up1(nlev) - dn1(nlev)
+        net2 = up2(nlev) - dn2(nlev)
+        denom = net2 - net1
+
+        !! A band with negligible emission at the lower boundary cannot be adjusted, use the first solve
+        if (abs(denom) <= tiny(denom)) then
+          alp = 0.0_dp
+        else
+          alp = (Fint - net1)/denom
+        end if
+
+        lw_up(:) = lw_up(:) + (up1(:) + alp*(up2(:) - up1(:))) * gw(g)
+        lw_down(:) = lw_down(:) + (dn1(:) + alp*(dn2(:) - dn1(:))) * gw(g)
+
+      end do
+    end do
+
+    !! Net lw fluxes at each level
+    lw_net(:) = lw_up(:) - lw_down(:)
+
+    !! Outgoing Longwave Radiation (olr)
+    olr = lw_up(1)
 
   end subroutine lw_disort
 
-  subroutine call_DISORT(nlyr,temper,gg,ssalb,dtauc,ntau,utau, &
-     &     plank,wvnmlo,wvnmhi,Tint,fbeam,umu0,fnetup,olr)
-!     ------------------ INPUT VARIABLES -----------------
-      LOGICAL plank
-      INTEGER nlyr,ntau
-      REAL*4 temper(0:nlyr),utau(ntau)
-      REAL*4 gg(nlyr),ssalb(nlyr),dtauc(nlyr)
-      REAL*4 fbeam,umu0,Tint,wvnmlo,wvnmhi
-!     ------------------ OUTPUT VARIABLES ----------------
-      REAL*8 fnetup(ntau), olr
+  subroutine call_DISORT(nlay, nlev, Te, tau_e, ssa, gg, wn_lo, wn_hi, Tbot, flx_up, flx_down)
+    implicit none
 
-!     ------------------ LOCAL VARIABLES -----------------
-      LOGICAL :: deltamplus = .true.
-      LOGICAL :: usrtau = .false.
-      logical :: usrang = .false.
-      logical :: lamber = .true.
-      logical :: onlyfl = .true.
-      logical :: do_pseudo_sphere = .false.
-      LOGICAL prnt(5)
+    integer, intent(in) :: nlay, nlev
+    real(dp), dimension(nlev), intent(in) :: Te, tau_e
+    real(dp), dimension(nlay), intent(in) :: ssa, gg
+    real(dp), intent(in) :: wn_lo, wn_hi
+    real(dp), intent(in) :: Tbot
+    real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
-      REAL*4 :: albedo = 1.0_sp  ! 1 if use net upward flux
-      REAL*4 :: fisot = 0.0_sp
-      REAL*4 :: temis = 0.0_sp
-      REAL*4 :: ttemp = 0.0_sp
+    !! DISORT dimensioning
+    integer, parameter :: nphi = 1
+    integer, parameter :: nmom = nstr + 1
+    integer :: numu, maxulv, i, k
 
-      integer, parameter :: nphi = 1
-      REAL*4 :: phi0 = 0.0_sp
-      real*4 phi(nphi)
+    !! DISORT arguments - the DISORT toolchain is compiled with
+    !! -fdefault-real-8, so its REAL declarations are 8 byte (see Makefile)
+    logical :: usrang, usrtau, onlyfl, plank, lamber, deltamplus, do_pseudo_sphere
+    logical :: prnt(5)
+    integer :: ibcnd
+    real(dp) :: dtauc(nlay), ssalb(nlay), pmom(0:nmom,nlay), temper(0:nlay)
+    real(dp) :: utau(nlev), h_lyr(0:nlay)
+    real(dp) :: wvnmlo, wvnmhi, umu0, phi0, fbeam, fisot, albedo, btemp, ttemp, temis
+    real(dp) :: earth_radius, accur
+    real(dp) :: phi(nphi), umu(nstr)
+    real(dp) :: rfldir(nlev), rfldn(nlev), flup(nlev), dfdt(nlev), uavg(nlev)
+    real(dp) :: uu(nstr,nlev,nphi), albmed(nstr), trnmed(nstr)
+    real(dp) :: rhoq(nstr/2,0:nstr/2,0:nstr-1), rhou(nstr,0:nstr/2,0:nstr-1)
+    real(dp) :: emust(nstr), bemst(nstr/2), rho_accurate(nstr,nphi)
+    character(len=127) :: header
 
-      integer :: ibcnd = 0
+    numu = nstr
+    maxulv = nlev
 
-      integer, parameter :: nstr = 24
-      integer, parameter :: nmom = nstr+1
-      integer, parameter :: numu = nstr
-
-      REAL*4 btemp,radius
-      REAL*4 rfldir(ntau), rfldn(ntau), flup(ntau), &
-     &     dfdt(ntau), uavg(ntau), uu(numu, ntau, nphi), &
-     &     albmed(numu), trnmed(numu)
-      REAL*4 taucum
-      INTEGER i,j,k
-      CHARACTER header*127
-
-      real*4 pmom(0:nmom,nlyr), h_lyr(0:nlyr)
-      real*4 rhoq(nstr/2, 0:nstr/2, 0:(nstr-1)), rhou(numu, 0:nstr/2, 0:(nstr-1))
-      real*4 emust(numu), bemst(nstr/2), rho_accurate(numu, nphi)
-      real*4 umu(numu)
-      real*4 :: accur = 0.001_dp
-
-      real*4 :: earth_radius = 6371.0_dp
-
-      !! Find phase function Legendre expansion coefficients for each layer, assume HG function
-      do i = 1, nlyr
-        call GETMOM(3, gg(i), nmom, pmom(:,i) )
+    !! Layer optical properties
+    do i = 1, nlay
+      dtauc(i) = real(tau_e(i+1) - tau_e(i), dp)
+      ssalb(i) = real(ssa(i), dp)
+      !! Henyey-Greenstein phase function moments: pmom(k) = g**k
+      pmom(0,i) = 1.0_dp
+      do k = 1, nmom
+        pmom(k,i) = real(gg(i)**k, dp)
       end do
+    end do
 
-!     INITIALIZATION FOR FNETUP
-      DO i = 1,nlyr+1
-         fnetup(i) = 0.0_dp
-      ENDDO
+    !! DISORT indexes temperature from 0 at the top of the column
+    do i = 1, nlev
+      temper(i-1) = real(Te(i), dp)
+      utau(i) = real(tau_e(i), dp)
+    end do
 
-      taucum = 0.0_dp
-      do i = 1,nlyr
-         taucum = taucum + dtauc(i)
-      enddo
-      if (utau(ntau).gt.taucum) utau(ntau) = taucum
-      btemp = Tint
-      prnt(1) = .false.
-      prnt(2) = .false.
-      prnt(3) = .false.
-      prnt(4) = .false.
-      prnt(5) = .false.
-      header = ''
+    !! Thermal source only - no solar beam in the longwave
+    plank = .True.
+    fbeam = 0.0_dp
+    umu0 = 1.0_dp
+    phi0 = 0.0_dp
+    fisot = 0.0_dp
+    phi(:) = 0.0_dp
 
-    CALL DISORT( nlyr, NMOM, NSTR, NUMU, NPHI, ntau,           &
-              & USRANG, USRTAU, IBCND, ONLYFL, PRNT,          &
-              &   PLANK, LAMBER, DELTAMPLUS, DO_PSEUDO_SPHERE,  &
-              &   DTAUC, SSALB, PMOM, TEMPER, WVNMLO, WVNMHI,   &
-              &   UTAU, UMU0, PHI0, UMU, PHI, FBEAM,            &
-              &   FISOT, ALBEDO, BTEMP, TTEMP, TEMIS,           &
-              &   EARTH_RADIUS, H_LYR,                          &
-              &   RHOQ, RHOU, RHO_ACCURATE, BEMST, EMUST,       &
-              &   ACCUR,  HEADER,                               &
-              &   RFLDIR, RFLDN, FLUP, DFDT, UAVG, UU,          &
-              &   ALBMED, TRNMED )
+    !! Band edges [cm-1] for the band-integrated Planck function
+    wvnmlo = wn_lo
+    wvnmhi = wn_hi
 
-      do i = 1, ntau
-         fnetup(i) = flup(i) - rfldir(i) - rfldn(i)
-         !print*, i, flup(i), rfldir(i), rfldn(i)
-      enddo
+    !! Non-reflecting lower boundary emitting at Tbot. The physical gas-giant
+    !! condition is imposed by the caller through the linear combination.
+    lamber = .True.
+    albedo = 0.0_dp
+    btemp = real(Tbot, dp)
 
-      olr = flup(1)
+    !! No emission or reflection from the top boundary
+    ttemp = 0.0_dp
+    temis = 0.0_dp
 
-    end subroutine call_DISORT
+    usrang = .False.
+    usrtau = .False.
+    onlyfl = .True.
+    ibcnd = 0
+    do_pseudo_sphere = .False.
+    earth_radius = 6371.0_dp
+    h_lyr(:) = 0.0_dp
+    accur = 0.0_dp
+    header = ''
+    prnt(:) = .False.
+
+    !! DISORT overwrites this argument internally (DISORT.f:474-497), so it
+    !! must be reset on every call.
+    deltamplus = use_deltamplus
+
+    rfldir(:) = 0.0_dp ; rfldn(:) = 0.0_dp ; flup(:) = 0.0_dp
+    dfdt(:) = 0.0_dp ; uavg(:) = 0.0_dp ; uu(:,:,:) = 0.0_dp
+    rhoq(:,:,:) = 0.0_dp ; rhou(:,:,:) = 0.0_dp
+    emust(:) = 0.0_dp ; bemst(:) = 0.0_dp ; rho_accurate(:,:) = 0.0_dp
+    albmed(:) = 0.0_dp ; trnmed(:) = 0.0_dp ; umu(:) = 0.0_dp
+
+    call DISORT(nlay, nmom, nstr, numu, nphi, maxulv, &
+      & usrang, usrtau, ibcnd, onlyfl, prnt, &
+      & plank, lamber, deltamplus, do_pseudo_sphere, &
+      & dtauc, ssalb, pmom, temper, wvnmlo, wvnmhi, &
+      & utau, umu0, phi0, umu, phi, fbeam, &
+      & fisot, albedo, btemp, ttemp, temis, &
+      & earth_radius, h_lyr, &
+      & rhoq, rhou, rho_accurate, bemst, emust, &
+      & accur, header, &
+      & rfldir, rfldn, flup, dfdt, uavg, uu, &
+      & albmed, trnmed)
+
+    do i = 1, nlev
+      flx_up(i) = real(flup(i), dp)
+      flx_down(i) = real(rfldir(i), dp) + real(rfldn(i), dp)
+    end do
+
+  end subroutine call_DISORT
 
 end module lw_disort_mod

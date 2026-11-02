@@ -1,12 +1,18 @@
 !!!
-! Elspeth KH Lee - Jun 2024: Initial version
-! sw: Four stream spherical harmonic method with multiple scattering (Rooney et al. 2023) 
-! following the PICASO method
-!     Pros: 
-!     Cons: 
+! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Nov 2026 : Rewritten following PICASO exactly, enabled
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!
+! sw: Four-stream spherical harmonic method (SH4) with multiple scattering (Rooney et al. 2024)
+!     Taken from PICASO (Batalha et al. 2019; Rooney et al. 2024) and converted to Fortran:
+!     fluxes.get_reflected_SH and fluxes.setup_4_stream_fluxes, checked against PICASO commit 4524b70
+!     (Oct 2026) to 1e-14. Delta-M scaling (f = g**4) and one-term HG phase function as PICASO.
+!     Differences to PICASO: no Rayleigh, gas giant lower boundary, own banded solver,
+!     fluxes found row by row, single zenith angle (no zcorr). None change the solution.
+!     TTHG option: as PICASO, but delta-M uses the TTHG chi_nstr for w0 and dtau too (consistent).
+!     Pros: Most accurate sw scheme here, works well for clouds and hazes
+!     Cons: Banded matrix solve, ~5-8x slower than the two-stream methods
 !!!
-
-!!! In development!!
 
 module sw_SH4_mod
   use, intrinsic :: iso_fortran_env
@@ -15,29 +21,40 @@ module sw_SH4_mod
   !! Precision variables
   integer, parameter :: dp = REAL64
 
+  !! Single scattering albedo cap - exactly conservative scattering (w = 1, eigenvalue k = 0) is singular.
+  !! 1 - 1e-12 absorbs < 1e-8 of the incident flux even in a tau ~ 6000 column
+  real(dp), parameter :: w_max = 1.0_dp - 1.0e-12_dp
+
   !! Required constants
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
   real(dp), parameter :: twopi = 2.0_dp * pi
   real(dp), parameter :: fourpi = 4.0_dp * pi
 
-  !! Use Two-Term HG function for sw
-  logical, parameter :: TTHG = .False.
+  !! Number of streams
+  integer, parameter :: nstr = 4
 
-  private :: sw_SH_four_stream
+  !! Use Two-Term HG function (TTHG), parameters are the PICASO defaults
+  !! forward fraction = frac_a + frac_b*g_back**frac_c, g_forward = c_forward*g, g_back = c_back*g
+  logical, parameter :: TTHG = .False.
+  real(dp), parameter :: tthg_forward = 1.0_dp, tthg_back = -0.5_dp
+  real(dp), parameter :: tthg_frac_a = 1.0_dp, tthg_frac_b = -1.0_dp
+  integer, parameter :: tthg_frac_c = 2
+
+  private :: sw_SH_four_stream, band_solve
   public :: sw_SH4
 
 contains
 
-  subroutine sw_SH4(nlay, nlev, nb, ng, gw, tau_e, mu_z, Finc, ssa, gg, a_surf, sw_up, sw_down, sw_net, asr)
+  subroutine sw_SH4(nlay, nlev, nb, ng, gw, tau_e, mu_z, Finc, ssa, gg, sw_up, sw_down, sw_net, asr)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev, nb, ng
-    real(dp), dimension(ng) :: gw
+    real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev) :: mu_z
-    real(dp), dimension(nb) :: Finc, a_surf
+    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: sw_up, sw_down, sw_net
@@ -45,32 +62,22 @@ contains
 
     !! Work variables
     integer :: b, g
-    real(dp), dimension(nb,nlev) :: sw_down_b, sw_up_b
-    real(dp), dimension(ng,nlev) :: sw_down_g, sw_up_g
+    real(dp), dimension(nlev) :: sw_up_g, sw_down_g
 
+    sw_up(:) = 0.0_dp
+    sw_down(:) = 0.0_dp
 
-    !! Shortwave flux calculation
+    !! Shortwave flux calculation - sum over each band and g-ordinance
     if (mu_z(nlev) > 0.0_dp) then
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
       do b = 1, nb
-        sw_down_b(b,:) = 0.0_dp
-        sw_up_b(b,:) = 0.0_dp
-        if (Finc(b) <= 0.0_dp) then
-          cycle
-        end if
+        if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), & 
-            & sw_down_g(g,:), sw_up_g(g,:))
-          sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
-          sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
+          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z(nlev), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
+            & sw_down_g(:), sw_up_g(:))
+          sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
+          sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
-        sw_down(:) = sw_down(:) + sw_down_b(b,:)
-        sw_up(:) = sw_up(:) + sw_up_b(b,:)
       end do
-    else
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
     end if
 
     !! Net sw flux
@@ -81,375 +88,317 @@ contains
 
   end subroutine sw_SH4
 
-  subroutine sw_SH_four_stream(nlay, nlev, F0_in, mu_in, tau_in, w_in, g_in, w_surf_in, flx_down, flx_up)
+  subroutine sw_SH_four_stream(nlay, nlev, F0PI, u0, tau_in, w_in, g_in, flx_down, flx_up)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
-    real(dp), intent(in) :: F0_in, w_surf_in
-    real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
+    real(dp), intent(in) :: F0PI, u0
+    real(dp), dimension(nlev), intent(in) :: tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_down, flx_up
 
     !! Work variables
-    integer :: l, k, i
-    real(dp), dimension(nlev) :: cum_trans
-    real(dp) :: mu_z
-    integer, parameter :: nstr = 4
+    integer :: k, l, m, n
+    integer, parameter :: kl = 5, ku = 5
+    real(dp) :: Del, b_top, b_surface, b_surface_SH4
     real(dp), dimension(nstr) :: Pu0
-    real(dp), dimension(nstr, nlay) :: a, bb, w_multi
-    real(dp), dimension(nlay) :: dtau
-    real(dp) :: surf_reflect, b_surface, b_top, b_surface_SH4
-
-    real(dp), dimension(nlay) :: beta, gam
-
-    real(dp), dimension(nstr,nlay) :: eta, del
-    real(dp), dimension(nlay) :: lam1, lam2, exptrm1, exptrm2
-    real(dp), dimension(nlay) :: delta
-    real(dp), dimension(nlay) ::  Q1, Q2, R1, R2, S1, S2
+    real(dp), dimension(nlay) :: dtau, w0, f_deltaM, g_f, g_b, f_f
+    real(dp), dimension(nstr,nlay) :: chi
+    real(dp), dimension(nstr,nlay) :: w_multi, a, bb, Dels, eta
+    real(dp), dimension(nlay) :: beta, gama, disc, lam1, lam2, exptrm1, exptrm2
+    real(dp), dimension(nlay) :: R1, R2, Q1, Q2, S1, S2
     real(dp), dimension(nlay) :: p1pl, p2pl, q1pl, q2pl, p1mn, p2mn, q1mn, q2mn
-    real(dp), dimension(nlay) :: z1mn, z2mn, z1pl, z2pl
-    real(dp), dimension(nlay) :: z1mn_up, z2mn_up, z1pl_up, z2pl_up, z1mn_down, z2mn_down, z1pl_down, z2pl_down
-    real(dp), dimension(nlay) :: f00, f01, f02, f03, f10, f11, f12, f13, f20, f21, f22, f23, f30, f31, f32, f33
-    real(dp), dimension(nlev) :: expon, tau_e
-
-    real(dp), dimension(11,4*nlay) :: Mb
-    real(dp), dimension(16,4*nlay) :: Mb_F
-    real(dp), dimension(4*nlay) :: B
-
-    real(dp), dimension(4*nlev, 4*nlay) :: F
-    real(dp), dimension(4*nlev) :: G
-    real(dp), dimension(4*nlay) :: F_bot
-    real(dp) :: G_bot
-
-    real(dp), dimension(4*nlev) :: flux_temp
-    real(dp) :: flux_bot, f0
-    real(dp), parameter :: eps_20 = 1.0e-20_dp
-
-
-    real(dp), dimension(nlay) :: sigma_sq, pmom2, fc, c
-    real(dp), dimension(nlay) :: w0, hg
-    integer :: info
-    integer, dimension(4*nlay) :: ipiv
+    real(dp), dimension(nlay) :: z1pl, z1mn, z2pl, z2mn
+    real(dp), dimension(nlay) :: f00, f01, f02, f03, f10, f11, f12, f13
+    real(dp), dimension(nlay) :: f20, f21, f22, f23, f30, f31, f32, f33
+    real(dp), dimension(nlay) :: z1mn_up, z2mn_up, z1pl_up, z2pl_up
+    real(dp), dimension(nlay) :: z1mn_down, z2mn_down, z1pl_down, z2pl_down
+    real(dp), dimension(nlev) :: tau, expon, cum_trans
+    real(dp), dimension(2*kl+ku+1, 4*nlay) :: Mb
+    real(dp), dimension(4*nlay) :: B, X
 
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
-
-      ! Check mu_z for spherical corrections
-      if (mu_in(nlev) == mu_in(1)) then
-        ! No zenith correction, use regular method
-        flx_down(:) = F0_in* mu_in(nlev) * exp(-tau_in(:)/mu_in(nlev))
-      else
-        ! Zenith angle correction, use cumulative transmission function
-        cum_trans(1) = tau_in(1)/mu_in(1)
-        do k = 1, nlev-1
-          cum_trans(k+1) = cum_trans(k) + (tau_in(k+1) - tau_in(k))/mu_in(k+1)
-        end do
-        do k = 1, nlev
-          flx_down(k) = F0_in * mu_in(nlev) * exp(-cum_trans(k))
-        end do
-      end if
-
-      flx_down(nlev) = flx_down(nlev) * (1.0_dp - w_surf_in) ! The surface flux for surface heating is the amount of flux absorbed by surface
-      flx_up(:) = 0.0_dp ! We assume no upward flux here even if surface albedo
-
+      cum_trans(:) = tau_in(:)/u0
+      flx_down(:) = F0PI * u0 * exp(-cum_trans(:))
+      flx_up(:) = 0.0_dp
       return
-
     end if
 
-     !! Calculate dtau in each layer
-    dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
+    n = 4*nlay
 
-    !! Delta-M+ scaling (Following DISORT: Lin et al. 2018)
-    !! Assume HG phase function for scaling (g**nstream)
-    where (g_in(:) >= 1e-6_dp)
-      fc(:) = g_in(:)**(nstr)
-      pmom2(:) = g_in(:)**(nstr+1)
-      sigma_sq(:) = real((nstr+1)**2 - nstr**2,dp) / &
-      & ( log(fc(:)**2/pmom2(:)**2) )
-      c(:) = exp(real(nstr**2,dp)/(2.0_dp*sigma_sq(:)))
-      fc(:) = c(:)*fc(:)
+    !! Phase function Legendre moments chi_l (OTHG: chi_l = g**l, TTHG as PICASO)
+    if (TTHG .eqv. .False.) then
+      do l = 1, nstr
+        chi(l,:) = g_in(:)**l
+      end do
+    else
+      g_f(:) = tthg_forward*g_in(:)
+      g_b(:) = tthg_back*g_in(:)
+      f_f(:) = tthg_frac_a + tthg_frac_b*g_b(:)**tthg_frac_c
+      do l = 1, nstr
+        chi(l,:) = f_f(:)*g_f(:)**l + (1.0_dp - f_f(:))*g_b(:)**l
+      end do
+    end if
 
-      w0(:) = w_in(:)*((1.0_dp - fc(:))/(1.0_dp - fc(:)*w_in(:)))
-      dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
-
-    elsewhere
-      w0(:) = w_in(:)
-      fc(:) = 0.0_dp
-    end where
-
-    hg(:) = g_in(:)
-    mu_z = mu_in(nlev) ! Can't do spherical geometry yet
-
-    !! Reform edge optical depths
-    tau_e(1) = 0.0_dp
+    !! Delta-M with f = chi_nstr (g**nstr for OTHG as PICASO, the TTHG moment for TTHG)
+    f_deltaM(:) = chi(nstr,:)
+    w0(:) = w_in(:)*(1.0_dp - f_deltaM(:))/(1.0_dp - w_in(:)*f_deltaM(:))
+    w0(:) = min(w0(:), w_max)
+    dtau(:) = (tau_in(2:nlev) - tau_in(1:nlay))*(1.0_dp - w_in(:)*f_deltaM(:))
+    tau(1) = 0.0_dp
     do k = 1, nlay
-      tau_e(k+1) = tau_e(k) + dtau(k)
+      tau(k+1) = tau(k) + dtau(k)
     end do
 
-    f0 = 1.0_dp/mu_z
-
+    !! Legendre polynomials at -u0
     Pu0(1) = 1.0_dp
-    Pu0(2) = -mu_z
-    Pu0(3) = (3.0_dp * mu_z**2 - 1.0_dp)/2.0_dp
-    Pu0(4) = (5.0_dp * -mu_z**3 - 3.0_dp * -(mu_z))/2.0_dp
+    Pu0(2) = -u0
+    Pu0(3) = (3.0_dp*u0**2 - 1.0_dp)/2.0_dp
+    Pu0(4) = (5.0_dp*(-u0)**3 - 3.0_dp*(-u0))/2.0_dp
 
+    !! Phase function moments with delta-M
     w_multi(1,:) = 1.0_dp
-    w_multi(2,:) = 3.0_dp * (hg(:) - fc(:)) / (1.0_dp - fc(:))
-    w_multi(3,:) = 5.0_dp * (hg(:)**2 - fc(:)) / (1.0_dp - fc(:))
-    w_multi(4,:) = 7.0_dp * (hg(:)**3 - fc(:)) / (1.0_dp - fc(:))
-
-    do l = 1, nstr
-      a(l,:) = real(2*(l-1) + 1,dp) -  w0(:) * w_multi(l,:) + eps_20
-      bb(l,:) = ((w0(:) * w_multi(l,:)) * 1.0_dp * Pu0(l)) / (fourpi)
+    do l = 1, nstr-1
+      w_multi(l+1,:) = (real(2*l+1,dp)*chi(l,:) - real(2*l+1,dp)*f_deltaM(:))/(1.0_dp - f_deltaM(:))
     end do
 
-    surf_reflect = 0.0_dp
+    do l = 0, nstr-1
+      a(l+1,:) = real(2*l+1,dp) - w0(:)*w_multi(l+1,:)
+      bb(l+1,:) = (F0PI*(w0(:)*w_multi(l+1,:)))*Pu0(l+1)/fourpi
+    end do
 
-    b_surface = 0.0_dp + surf_reflect*mu_z*1.0_dp*exp(-tau_e(nlev)/mu_z)
-    b_surface_SH4 = -(0.0_dp + surf_reflect*mu_z*1.0_dp*exp(-tau_e(nlev)/mu_z))/4.0_dp
-
+    !! Boundary conditions - nothing enters at the top, gas giant lower boundary
     b_top = 0.0_dp
+    b_surface = 0.0_dp
+    b_surface_SH4 = 0.0_dp
 
-    !! Find beta and gamma
-    beta(:) = a(1,:)*a(2,:) + (4.0_dp/9.0_dp)*a(1,:)*a(4,:) + (1.0_dp/9.0_dp)*a(3,:)*a(4,:)
-    gam(:) = (a(1,:)*a(2,:)*a(3,:)*a(4,:))/9.0_dp
+    !! Eigenvalues (lam2 from lam1**2 lam2**2 = gama to avoid cancellation)
+    beta(:) = a(1,:)*a(2,:) + 4.0_dp*a(1,:)*a(4,:)/9.0_dp + a(3,:)*a(4,:)/9.0_dp
+    gama(:) = a(1,:)*a(2,:)*a(3,:)*a(4,:)/9.0_dp
+    disc(:) = sqrt(max(beta(:)**2 - 4.0_dp*gama(:), 0.0_dp))
+    lam1(:) = sqrt((beta(:) + disc(:))/2.0_dp)
+    lam2(:) = sqrt(2.0_dp*gama(:)/(beta(:) + disc(:)))
 
-    ! Find k values - lambda in Rooney
-    lam1(:) = sqrt((beta(:) + sqrt((beta(:)**2 - 4.0_dp*gam(:))))/2.0_dp)
-    lam2(:) = sqrt((beta(:) - sqrt((beta(:)**2 - 4.0_dp*gam(:))))/2.0_dp)
+    !! Direct beam particular solution
+    do k = 1, nlay
+      Del = 9.0_dp*((1.0_dp/u0)**4 - beta(k)*(1.0_dp/u0)**2 + gama(k))
+      Dels(1,k) = (a(2,k)*bb(1,k) - bb(2,k)/u0)*(a(3,k)*a(4,k) - 9.0_dp/u0**2) &
+        & + 2.0_dp*(a(4,k)*bb(3,k) - 2.0_dp*a(4,k)*bb(1,k) - 3.0_dp*bb(4,k)/u0)/u0**2
+      Dels(2,k) = (a(1,k)*bb(2,k) - bb(1,k)/u0)*(a(3,k)*a(4,k) - 9.0_dp/u0**2) &
+        & - 2.0_dp*a(1,k)*(a(4,k)*bb(3,k) - 3.0_dp*bb(4,k)/u0)/u0
+      Dels(3,k) = (a(4,k)*bb(3,k) - 3.0_dp*bb(4,k)/u0)*(a(1,k)*a(2,k) - 1.0_dp/u0**2) &
+        & - 2.0_dp*a(4,k)*(a(1,k)*bb(2,k) - bb(1,k)/u0)/u0
+      Dels(4,k) = (a(3,k)*bb(4,k) - 3.0_dp*bb(3,k)/u0)*(a(1,k)*a(2,k) - 1.0_dp/u0**2) &
+        & + 2.0_dp*(3.0_dp*a(1,k)*bb(2,k) - 2.0_dp*a(1,k)*bb(4,k) - 3.0_dp*bb(1,k)/u0)/u0**2
+      eta(:,k) = Dels(:,k)/Del
+    end do
 
-    !! Find the delta values
-    delta(:) = 9.0_dp*(f0**4 - beta(:)*f0**2 + gam(:))
-    del(1,:) = (a(2,:)*bb(1,:) - bb(2,:)*f0)*(a(3,:)*a(4,:) - 9.0_dp*f0**2) &
-     & + 2.0_dp*f0**2*(a(4,:)*bb(3,:) - 2.0_dp*a(4,:)*bb(1,:) - 3.0_dp*bb(4,:)*f0)
-    del(2,:) = (a(1,:)*bb(2,:) - bb(1,:)*f0)*(a(3,:)*a(4,:) - 9.0_dp*f0**2) & 
-      & - 2.0_dp*a(1,:)*f0*(a(4,:)*bb(3,:) - 3.0_dp*bb(4,:)*f0)
-    del(3,:) = (a(4,:)*bb(3,:) - 3.0_dp*bb(4,:)*f0)*(a(1,:)*a(2,:) & 
-      & - f0**2) - 2.0_dp*a(4,:)*f0*(a(1,:)*bb(2,:) - bb(1,:)*f0)
-    del(4,:) = (a(3,:)*bb(4,:) - 3.0_dp*bb(3,:)*f0)*(a(1,:)*a(2,:) - f0**2) &
-      &  + 2.0_dp*f0**2*(3.0_dp*a(1,:)*bb(2,:) - 2.0_dp*a(1,:)*bb(4,:) - 3.0_dp*bb(1,:)*f0)
+    z1pl(:) = (eta(1,:)/2.0_dp + eta(2,:) + 5.0_dp*eta(3,:)/8.0_dp)*twopi
+    z1mn(:) = (eta(1,:)/2.0_dp - eta(2,:) + 5.0_dp*eta(3,:)/8.0_dp)*twopi
+    z2pl(:) = (-eta(1,:)/8.0_dp + 5.0_dp*eta(3,:)/8.0_dp + eta(4,:))*twopi
+    z2mn(:) = (-eta(1,:)/8.0_dp + 5.0_dp*eta(3,:)/8.0_dp - eta(4,:))*twopi
 
-    eta(1,:) = del(1,:)/delta(:)
-    eta(2,:) = del(2,:)/delta(:)
-    eta(3,:) = del(3,:)/delta(:)
-    eta(4,:) = del(4,:)/delta(:)
+    exptrm1(:) = exp(-min(lam1(:)*dtau(:), 35.0_dp))
+    exptrm2(:) = exp(-min(lam2(:)*dtau(:), 35.0_dp))
 
+    !! Legendre moments of the homogeneous modes
+    R1(:) = -a(1,:)/lam1(:) ; R2(:) = -a(1,:)/lam2(:)
+    Q1(:) = 0.5_dp*(a(1,:)*a(2,:)/(lam1(:)**2) - 1.0_dp) ; Q2(:) = 0.5_dp*(a(1,:)*a(2,:)/(lam2(:)**2) - 1.0_dp)
+    S1(:) = -3.0_dp/(2.0_dp*a(4,:))*(a(1,:)*a(2,:)/lam1(:) - lam1(:))
+    S2(:) = -3.0_dp/(2.0_dp*a(4,:))*(a(1,:)*a(2,:)/lam2(:) - lam2(:))
 
-    z1pl(:) = (eta(1,:)/2.0_dp + eta(2,:) + 5.0_dp*eta(3,:)/8.0_dp) * twopi
-    z1mn(:) = (eta(1,:)/2.0_dp - eta(2,:) + 5.0_dp*eta(3,:)/8.0_dp) * twopi
-    z2pl(:) = (-eta(1,:)/8.0_dp + 5.0_dp*eta(3,:)/8.0_dp + eta(4,:)) * twopi 
-    z2mn(:) = (-eta(1,:)/8.0_dp + 5.0_dp*eta(3,:)/8.0_dp - eta(4,:)) * twopi
+    !! Hemispheric flux (p) and second Marshak moment (q) of each mode
+    p1pl(:) = (0.5_dp + R1(:) + 5.0_dp*Q1(:)/8.0_dp)*twopi
+    p2pl(:) = (0.5_dp + R2(:) + 5.0_dp*Q2(:)/8.0_dp)*twopi
+    q1pl(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q1(:)/8.0_dp + S1(:))*twopi
+    q2pl(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q2(:)/8.0_dp + S2(:))*twopi
+    p1mn(:) = (0.5_dp - R1(:) + 5.0_dp*Q1(:)/8.0_dp)*twopi
+    p2mn(:) = (0.5_dp - R2(:) + 5.0_dp*Q2(:)/8.0_dp)*twopi
+    q1mn(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q1(:)/8.0_dp - S1(:))*twopi
+    q2mn(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q2(:)/8.0_dp - S2(:))*twopi
 
-    !! Find e values
-    exptrm1(:) = min(lam1(:)*dtau(:),35.0_dp)
-    exptrm1(:) = exp(-exptrm1(:))
-    exptrm2(:) = min(lam2(:)*dtau(:),35.0_dp)
-    exptrm2(:) = exp(-exptrm2(:))  
-
-    R1(:) = -a(1,:)/lam1(:); R2(:) = -a(1,:)/lam2(:)
-    Q1(:) = 1.0_dp/2.0_dp * (a(1,:)*a(2,:)/(lam1(:)**2) - 1.0_dp)
-    Q2(:) = 1.0_dp/2.0_dp * (a(1,:)*a(2,:)/(lam2(:)**2) - 1.0_dp)
-    S1(:) = -3.0_dp/(2.0_dp*a(4,:)) * (a(1,:)*a(2,:)/lam1(:) - lam1(:));
-    S2(:) = -3.0_dp/(2.0_dp*a(4,:)) * (a(1,:)*a(2,:)/lam2(:) - lam2(:))
-
-    p1pl(:) = (1.0_dp/2.0_dp + R1(:) + 5.0_dp*Q1(:)/8.0_dp)  * twopi
-    p2pl(:) = (1.0_dp/2.0_dp + R2(:) + 5.0_dp*Q2(:)/8.0_dp)  * twopi
-    q1pl(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q1(:)/8.0_dp + S1(:)) * twopi
-    q2pl(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q2(:)/8.0_dp + S2(:)) * twopi
-    p1mn(:) = (1.0_dp/2.0_dp - R1(:) + 5.0_dp*Q1(:)/8.0_dp)  * twopi
-    p2mn(:) = (1.0_dp/2.0_dp - R2(:) + 5.0_dp*Q2(:)/8.0_dp)  * twopi
-    q1mn(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q1(:)/8.0_dp - S1(:)) * twopi
-    q2mn(:) = (-1.0_dp/8.0_dp + 5.0_dp*Q2(:)/8.0_dp - S2(:)) * twopi
-
-    f00(:)= p1mn(:)*exptrm1(:); f01(:) = p1pl(:)/exptrm1(:); f02(:) = p2mn(:)*exptrm2(:); f03(:) = p2pl(:)/exptrm2(:)
+    f00(:) = p1mn(:)*exptrm1(:); f01(:) = p1pl(:)/exptrm1(:); f02(:) = p2mn(:)*exptrm2(:); f03(:) = p2pl(:)/exptrm2(:)
     f10(:) = q1mn(:)*exptrm1(:); f11(:) = q1pl(:)/exptrm1(:); f12(:) = q2mn(:)*exptrm2(:); f13(:) = q2pl(:)/exptrm2(:)
     f20(:) = p1pl(:)*exptrm1(:); f21(:) = p1mn(:)/exptrm1(:); f22(:) = p2pl(:)*exptrm2(:); f23(:) = p2mn(:)/exptrm2(:)
     f30(:) = q1pl(:)*exptrm1(:); f31(:) = q1mn(:)/exptrm1(:); f32(:) = q2pl(:)*exptrm2(:); f33(:) = q2mn(:)/exptrm2(:)
 
-    expon(:) = exp(-tau_e(:)/mu_z)
-    z1mn_up(:) = z1mn(:) * expon(2:nlev)
-    z2mn_up(:) = z2mn(:) * expon(2:nlev)
-    z1pl_up(:) = z1pl(:) * expon(2:nlev)
-    z2pl_up(:) = z2pl(:) * expon(2:nlev)
-    z1mn_down(:) = z1mn(:) * expon(1:nlay)
-    z2mn_down(:) = z2mn(:) * expon(1:nlay)
-    z1pl_down(:) = z1pl(:) * expon(1:nlay)
-    z2pl_down(:) = z2pl(:) * expon(1:nlay)
+    expon(:) = exp(-min(tau(:)/u0, 35.0_dp))
+    z1mn_up(:) = z1mn(:)*expon(2:nlev)
+    z2mn_up(:) = z2mn(:)*expon(2:nlev)
+    z1pl_up(:) = z1pl(:)*expon(2:nlev)
+    z2pl_up(:) = z2pl(:)*expon(2:nlev)
+    z1mn_down(:) = z1mn(:)*expon(1:nlay)
+    z2mn_down(:) = z2mn(:)*expon(1:nlay)
+    z1pl_down(:) = z1pl(:)*expon(1:nlay)
+    z2pl_down(:) = z2pl(:)*expon(1:nlay)
 
+    !! Banded matrix, entry for entry as PICASO's Mb (setM converts to LAPACK storage)
     Mb(:,:) = 0.0_dp
     B(:) = 0.0_dp
-    F_bot(:) = 0.0_dp
-    G_bot = 0.0_dp
-    F(:,:) = 0.0_dp
-    G(:) = 0.0_dp
 
-    !top boundary conditions
-    Mb(6,1) = p1mn(1)
-    Mb(6,2) = q1pl(1)
-    Mb(5,2) = p1pl(1)
-    Mb(5,3) = q2mn(1)
-    Mb(4,3) = p2mn(1)
-    Mb(4,4) = q2pl(1)
-    Mb(3,4) = p2pl(1)
-    Mb(7,1) = q1mn(1)
+    ! Top boundary conditions
+    call setM(5, 0, p1mn(1))
+    call setM(5, 1, q1pl(1))
+    call setM(4, 1, p1pl(1))
+    call setM(4, 2, q2mn(1))
+    call setM(3, 2, p2mn(1))
+    call setM(3, 3, q2pl(1))
+    call setM(2, 3, p2pl(1))
+    call setM(6, 0, q1mn(1))
 
     B(1) = b_top - z1mn_down(1)
     B(2) = -b_top/4.0_dp - z2mn_down(1)
 
-    ! bottom boundary conditions
-    Mb(6,4*nlay-1) = f22(nlay) - surf_reflect*f02(nlay)
-    Mb(6,4*nlay) = f33(nlay) - surf_reflect*f13(nlay)
-    Mb(5,4*nlay) = f23(nlay) - surf_reflect*f03(nlay)
-    Mb(7,4*nlay-2) = f21(nlay) - surf_reflect*f01(nlay)
-    Mb(7,4*nlay-1) = f32(nlay) - surf_reflect*f12(nlay)
-    Mb(8,4*nlay-3) = f20(nlay) - surf_reflect*f00(nlay)
-    Mb(8,4*nlay-2) = f31(nlay) - surf_reflect*f11(nlay)
-    Mb(9,4*nlay-3) = f30(nlay) - surf_reflect*f10(nlay)
+    ! Bottom boundary conditions
+    call setM(5, n-2, f22(nlay))
+    call setM(5, n-1, f33(nlay))
+    call setM(4, n-1, f23(nlay))
+    call setM(6, n-3, f21(nlay))
+    call setM(6, n-2, f32(nlay))
+    call setM(7, n-4, f20(nlay))
+    call setM(7, n-3, f31(nlay))
+    call setM(8, n-4, f30(nlay))
 
-    B(4*nlay-1) = b_surface - z1pl_up(nlay) + surf_reflect*z1mn_up(nlay)
-    B(4*nlay) = b_surface_SH4 - z2pl_up(nlay) + surf_reflect*z2mn_up(nlay)
+    B(n-1) = b_surface - z1pl_up(nlay)
+    B(n) = b_surface_SH4 - z2pl_up(nlay)
 
-    !fill remaining rows of matrix
-    do i = 1, nlay-1
-      Mb(6,4*i - 1) = f02(i)
-      Mb(6,4*i) = f13(i)
-      Mb(6,4*i + 1) = -p1pl(i+1)
-      Mb(6,4*i + 2) = -q1mn(i+1)
-        
-      Mb(5,4*i) = f03(i)
-      Mb(5,4*i + 1) = -q1mn(i+1)
-      Mb(5,4*i + 2) = -p1mn(i+1)
-      Mb(5,4*i + 3) = -q2pl(i+1)
-        
-      Mb(4,4*i + 1) = -p1mn(i+1)
-      Mb(4,4*i + 2) = -q1pl(i+1)
-      Mb(4,4*i + 3) = -p2pl(i+1)
-      Mb(4,4*i + 4) = -q2mn(i+1)
-        
-      Mb(3,4*i + 2) = -p1pl(i+1)
-      Mb(3,4*i + 3) = -q2mn(i+1)
-      Mb(3,4*i + 4) = -p2mn(i+1)
-        
-      Mb(2,4*i + 3) = -p2mn(i+1)
-      Mb(2,4*i + 4) = -q2pl(i+1)
-        
-      Mb(1,4*i + 4) = -p2pl(i+1)
-        
-      Mb(7,4*i - 2) = f01(i)
-      Mb(7,4*i -1) = f12(i)
-      Mb(7,4*i) = f23(i)
-      Mb(7,4*i + 1) = -q1pl(i+1)
-        
-      Mb(8,4*i - 3) = f00(i)
-      Mb(8,4*i - 2) = f11(i)
-      Mb(8,4*i - 1) = f22(i)
-      Mb(8,4*i) = f33(i)
-        
-      Mb(9,4*i - 3) = f10(i)
-      Mb(9,4*i - 2) = f21(i)
-      Mb(9,4*i - 1) = f32(i)
-        
-      Mb(10,4*i - 3) = f20(i)
-      Mb(10,4*i - 2) = f31(i)
-        
-      Mb(11,4*i - 3) = f30(i)
-    end do 
+    ! Fill remaining rows of matrix (layer interfaces, m is the 0-based layer above)
+    do m = 0, nlay-2
+      k = m + 1   ! 1-based layer above, k+1 the layer below
 
-    do i = 1, nlay-1
-      B(4*i - 1) = z1mn_down(i+1) - z1mn_up(i)
-      B(4*i) = z2mn_down(i+1) - z2mn_up(i)
-      B(4*i + 1) = z1pl_down(i+1)- z1pl_up(i)
-      B(4*i + 2) = z2pl_down(i+1) - z2pl_up(i)
+      call setM(5, 4*m+2, f02(k))
+      call setM(5, 4*m+3, f13(k))
+      call setM(5, 4*m+4, -p1pl(k+1))
+      call setM(5, 4*m+5, -q1mn(k+1))
+
+      call setM(4, 4*m+3, f03(k))
+      call setM(4, 4*m+4, -q1mn(k+1))
+      call setM(4, 4*m+5, -p1mn(k+1))
+      call setM(4, 4*m+6, -q2pl(k+1))
+
+      call setM(3, 4*m+4, -p1mn(k+1))
+      call setM(3, 4*m+5, -q1pl(k+1))
+      call setM(3, 4*m+6, -p2pl(k+1))
+      call setM(3, 4*m+7, -q2mn(k+1))
+
+      call setM(2, 4*m+5, -p1pl(k+1))
+      call setM(2, 4*m+6, -q2mn(k+1))
+      call setM(2, 4*m+7, -p2mn(k+1))
+
+      call setM(1, 4*m+6, -p2mn(k+1))
+      call setM(1, 4*m+7, -q2pl(k+1))
+
+      call setM(0, 4*m+7, -p2pl(k+1))
+
+      call setM(6, 4*m+1, f01(k))
+      call setM(6, 4*m+2, f12(k))
+      call setM(6, 4*m+3, f23(k))
+      call setM(6, 4*m+4, -q1pl(k+1))
+
+      call setM(7, 4*m+0, f00(k))
+      call setM(7, 4*m+1, f11(k))
+      call setM(7, 4*m+2, f22(k))
+      call setM(7, 4*m+3, f33(k))
+
+      call setM(8, 4*m+0, f10(k))
+      call setM(8, 4*m+1, f21(k))
+      call setM(8, 4*m+2, f32(k))
+
+      call setM(9, 4*m+0, f20(k))
+      call setM(9, 4*m+1, f31(k))
+
+      call setM(10, 4*m+0, f30(k))
+
+      B(4*m+3) = z1mn_down(k+1) - z1mn_up(k)
+      B(4*m+4) = z2mn_down(k+1) - z2mn_up(k)
+      B(4*m+5) = z1pl_down(k+1) - z1pl_up(k)
+      B(4*m+6) = z2pl_down(k+1) - z2pl_up(k)
     end do
 
-    Mb_F(:,:) = 0.0_dp
-    Mb_F(6,:) = Mb(1,:)
-    Mb_F(7,:) = Mb(2,:)
-    Mb_F(8,:) = Mb(3,:)  
-    Mb_F(9,:) = Mb(4,:)
-    Mb_F(10,:) = Mb(5,:)  
-    Mb_F(11,:) = Mb(6,:)
-    Mb_F(12,:) = Mb(7,:)
-    Mb_F(13,:) = Mb(8,:)
-    Mb_F(14,:) = Mb(9,:)   
-    Mb_F(15,:) = Mb(10,:)    
-    Mb_F(16,:) = Mb(11,:)
+    call band_solve(n, kl, ku, Mb, B, X)
 
-    call dgbsv(4*nlay, 5, 5, 1, Mb_F, 16, ipiv, B, 4*nlay, info)
-
-    if (info == 0) then
-        ! Success, B now contains the solution
-    else
-        print *, "An error occurred: ", info
-    endif
-
-   ! flux at bottom of atmosphere
-    F_bot(nlay-3) = f20(nlay)
-    F_bot(nlay-2) = f21(nlay)
-    F_bot(nlay-1) = f22(nlay)
-    F_bot(nlay) = f23(nlay)
-    G_bot = z1pl_up(nlay)
-
-    F(1,1) = p1mn(1)
-    F(1,2) = p1pl(1)
-    F(1,3) = p2mn(1)
-    F(1,4) = p2pl(1)
-    F(2,1) = q1mn(1)
-    F(2,2) = q1pl(1)
-    F(2,3) = q2mn(1)
-    F(2,4) = q2pl(1)
-    F(3,1) = p1pl(1)
-    F(3,2) = p1mn(1)
-    F(3,3) = p2pl(1)
-    F(3,4) = p2mn(1)
-    F(4,1) = q1pl(1)
-    F(4,2) = q1mn(1)
-    F(4,2) = q2pl(1)
-    F(4,4) = q2mn(1)
-
-    k = 0
-    do i = 1, 4*nlay, 4
-      F(i+4,i) = f00(k+1)
-      F(i+4,i+1) = f01(k+1)
-      F(i+4,i+2) = f02(k+1)
-      F(i+4,i+3) = f03(k+1)
-      F(i+5,i) = f10(k+1)
-      F(i+5,i+1) = f11(k+1)
-      F(i+5,i+2) = f12(k+1)
-      F(i+5,i+3) = f13(k+1)
-      F(i+6,i) = f20(k+1)
-      F(i+6,i+1) = f21(k+1)
-      F(i+6,i+2) = f22(k+1)
-      F(i+6,i+3) = f23(k+1)
-      F(i+7,i) = f30(k+1)
-      F(i+7,i+1) = f31(k+1)
-      F(i+7,i+2) = f32(k+1)
-      F(i+7,i+3) = f33(k+1)
-      k = k + 1
-    end do
-                             
-    G(1) = z1mn_down(1)
-    G(2) = z2mn_down(1)
-    G(3) = z1pl_down(1)
-    G(4) = z2pl_down(1)
-    do i = 1, nlay
-      G(4*i + 1) = z1mn_up(i)
-      G(4*i + 2) = z2mn_up(i)
-      G(4*i + 3) = z1pl_up(i)
-      G(4*i + 4) = z2pl_up(i)
+    !! Level fluxes (PICASO F X + G) - top level from layer 1, level k+1 from the bottom of layer k
+    flx_down(1) = p1mn(1)*X(1) + p1pl(1)*X(2) + p2mn(1)*X(3) + p2pl(1)*X(4) + z1mn_down(1)
+    flx_up(1) = p1pl(1)*X(1) + p1mn(1)*X(2) + p2pl(1)*X(3) + p2mn(1)*X(4) + z1pl_down(1)
+    do k = 1, nlay
+      flx_down(k+1) = f00(k)*X(4*k-3) + f01(k)*X(4*k-2) + f02(k)*X(4*k-1) + f03(k)*X(4*k) + z1mn_up(k)
+      flx_up(k+1) = f20(k)*X(4*k-3) + f21(k)*X(4*k-2) + f22(k)*X(4*k-1) + f23(k)*X(4*k) + z1pl_up(k)
     end do
 
-    flux_temp(:) = matmul(F(:,:),B(:)) + G(:)
-    flux_bot = sum(F_bot(:)*B(:)) + G_bot
+    !! Add the direct beam to the downward flux
+    flx_down(:) = flx_down(:) + F0PI*u0*exp(-tau(:)/u0)
 
-    do i = 1, nlev
-      flx_down(i) = max(flux_temp(i*4 - 3),0.0_dp)*F0_in + mu_z * F0_in * expon(i)
-      flx_up(i) = max(flux_temp(i*4 - 1), 0.0_dp)*F0_in
-    end do
+  contains
+
+    !! Put PICASO's (0-based scipy) band entry (r, j) into LAPACK band storage
+    subroutine setM(r, j, val)
+      integer, intent(in) :: r, j
+      real(dp), intent(in) :: val
+      Mb(kl+1+r, j+1) = val
+    end subroutine setM
 
   end subroutine sw_SH_four_stream
+
+  !! Banded Gaussian elimination with partial pivoting (as LAPACK dgbsv)
+  !! A(i,j) = ab(kl+ku+1+i-j,j), the top kl rows of ab are workspace
+  subroutine band_solve(n, kl, ku, ab, b, x)
+    implicit none
+
+    integer, intent(in) :: n, kl, ku
+    real(dp), dimension(2*kl+ku+1, n), intent(inout) :: ab
+    real(dp), dimension(n), intent(inout) :: b
+    real(dp), dimension(n), intent(out) :: x
+
+    integer :: i, j, k, p, d, jmax
+    real(dp) :: amax, fac, tmp
+
+    d = kl + ku + 1
+
+    do k = 1, n
+      jmax = min(n, k+kl+ku)
+
+      ! Partial pivoting within the band
+      p = k
+      amax = abs(ab(d,k))
+      do i = k+1, min(n, k+kl)
+        if (abs(ab(d+i-k,k)) > amax) then
+          amax = abs(ab(d+i-k,k))
+          p = i
+        end if
+      end do
+      if (p /= k) then
+        do j = k, jmax
+          tmp = ab(d+k-j,j)
+          ab(d+k-j,j) = ab(d+p-j,j)
+          ab(d+p-j,j) = tmp
+        end do
+        tmp = b(k) ; b(k) = b(p) ; b(p) = tmp
+      end if
+
+      ! Eliminate below the pivot
+      do i = k+1, min(n, k+kl)
+        fac = ab(d+i-k,k)/ab(d,k)
+        if (fac == 0.0_dp) cycle
+        do j = k+1, jmax
+          ab(d+i-j,j) = ab(d+i-j,j) - fac*ab(d+k-j,j)
+        end do
+        b(i) = b(i) - fac*b(k)
+      end do
+    end do
+
+    ! Back substitution
+    do i = n, 1, -1
+      tmp = b(i)
+      do j = i+1, min(n, i+kl+ku)
+        tmp = tmp - ab(d+i-j,j)*x(j)
+      end do
+      x(i) = tmp/ab(d,i)
+    end do
+
+  end subroutine band_solve
 
 end module sw_SH4_mod

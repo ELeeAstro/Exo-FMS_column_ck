@@ -2,6 +2,8 @@
 ! Elspeth KH Lee - May 2021 : Initial version
 !                - Jan 2022 : Working version
 !                - Jun 2024 : Optimisations
+!                - Nov 2026 : Renamed lw_Toon89 (was lw_Toon)
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
 !
 ! lw: Two-stream method following the "Toon89" method (Toon et al. 1989)
 !     Based on the CHIMERA code by Mike Line, but cleaned up slightly
@@ -9,9 +11,10 @@
 !     Cons: For longwave combined high ssa and g (0.9+,0.9+) can be unstable
 !!!
 
-module lw_Toon_mod
+module lw_Toon89_mod
   use, intrinsic :: iso_fortran_env
-  use WENO4_mod, only : interpolate_weno4  
+  use WENO4_mod, only : interpolate_weno4
+  use BB_integrate_mod, only : BB_integrate
   implicit none
 
   !! Precision variables
@@ -21,19 +24,13 @@ module lw_Toon_mod
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
   real(dp), parameter :: twopi = 2.0_dp * pi
   real(dp), parameter :: sb = 5.670374419e-8_dp
-  real(dp), parameter :: hp = 6.62607015e-34_dp
-  real(dp), parameter :: kb = 1.380649e-23_dp
-  real(dp), parameter :: c_s = 2.99792458e8_dp
-  real(dp), parameter :: c1 = (hp * c_s) / kb
-  real(dp), parameter :: c2 = c_s**2
-  real(dp), parameter :: n2 = 2.0_dp * hp * c2
 
   real(dp), parameter :: ubari = 0.5_dp
 
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
   !! make sure to make clean and recompile if you change these
-  
+
   !! Optimised quadrature for 1 node (Hogan 2024)
   ! integer, parameter :: nmu = 1
   ! real(dp), dimension(nmu), parameter :: uarr = (/0.6096748751_dp/)
@@ -41,18 +38,33 @@ module lw_Toon_mod
   ! real(dp), dimension(nmu), parameter :: wuarr = uarr * w
 
   !! Legendre quadrature for 2 nodes
-  integer, parameter :: nmu = 2
-  real(dp), dimension(nmu), parameter :: uarr = (/0.21132487_dp, 0.78867513_dp/)
-  real(dp), dimension(nmu), parameter :: w = (/0.5_dp, 0.5_dp/)
-  real(dp), dimension(nmu), parameter :: wuarr = uarr * w
+  !integer, parameter :: nmu = 2
+  !real(dp), dimension(nmu), parameter :: uarr = (/0.21132487_dp, 0.78867513_dp/)
+  !real(dp), dimension(nmu), parameter :: w = (/0.5_dp, 0.5_dp/)
+  !real(dp), dimension(nmu), parameter :: wuarr = uarr * w
 
-  private :: lw_Toon89, dtridgl, BB_integrate
-  public :: lw_Toon
+  !! 5 point EGP  Legendre quadrature values - 10 stream
+  ! integer, parameter :: nmu = 5
+  ! real(dp), dimension(nmu), parameter :: uarr = &
+  !   &(/0.0985350858_dp, 0.3045357266_dp, 0.5620251898_dp, 0.8019865821_dp, 0.9601901429_dp/)
+  ! real(dp), dimension(nmu), parameter :: wuarr = &
+  !   & (/0.0157479145_dp, 0.0739088701_dp, 0.1463869871_dp, 0.1671746381_dp, 0.0967815902_dp/)
+
+  !! Gauss–Jacobi-5 quadrature for 4 nodes - 8 stream (Hogan 2024)
+  !! Hogan's weights w are for the measure 2 mu dmu (sum 1, F = pi sum w I); here the 2 pi
+  !! is carried in the intensities (F = 2 pi sum wuarr I), so wuarr = w/2 (sum 0.5)
+  integer, parameter :: nmu = 4
+  real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
+  real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp/)
+  real(dp), dimension(nmu), parameter :: wuarr = 0.5_dp * w
+
+  private :: lw_Toon89_method, dtridgl
+  public :: lw_Toon89
 
 contains
 
 
-  subroutine lw_Toon(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, a_surf, Tint, lw_up, lw_down, lw_net, olr)
+  subroutine lw_Toon89(nlay, nlev, nb, ng, gw, wn_e, Tl, pl, pe, tau_e, ssa, gg, Tint, lw_up, lw_down, lw_net, olr)
     implicit none
 
     !! Input variables
@@ -63,7 +75,6 @@ contains
     real(dp), dimension(nlev), intent(in) :: pe
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nb), intent(in) :: a_surf
     real(dp), intent(in) :: Tint
 
     !! Output variables
@@ -74,37 +85,33 @@ contains
     integer :: k, b, g
     real(dp), dimension(nlev) :: Te
     real(dp), dimension(nb,nlev) :: be
-    real(dp), dimension(nb) :: be_int
-    real(dp), dimension(nb,nlev) :: lw_down_b, lw_up_b
-    real(dp), dimension(ng,nlev) :: lw_down_g, lw_up_g
+    real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), parameter :: a_surf = 0.0_dp   ! gas giant: no reflecting lower boundary
 
-    !! Use WENO4 method to (smoothly) interpolate layers to levels
-    Te(:) = interpolate_weno4(pe, pl, Tl, .False.)
+    !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
+    Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
 
-    !! Edges are linearly interpolated to avoid overshoot
-    Te(1) = 10.0_dp**(log10(Tl(1)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * log10(Tl(1)/Te(2)))
-    Te(nlev) = 10.0_dp**(log10(Tl(nlay)) + (log10(pe(nlev)/pe(nlay))/log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
+    !! Edges are linearly extrapolated in log(p)-log(T) space.
+    Te(1) = 10.0_dp**(log10(Te(2)) + (log10(pe(1)/pe(2))/log10(pl(1)/pe(2))) * &
+      & log10(Tl(1)/Te(2)))
+    Te(nlev) = 10.0_dp**(log10(Te(nlay)) + (log10(pe(nlev)/pe(nlay))/ &
+      & log10(pl(nlay)/pe(nlay))) * log10(Tl(nlay)/Te(nlay)))
 
     !! Find integrated planck function for each band for each level
     do k = 1, nlev
-      call BB_integrate(nb, Te(k), wn_e, be(:,k))   ! Integrated planck function intensity at levels for each band
+      call BB_integrate(nb, Te(k), wn_e, be(:,k))
     end do
-    call BB_integrate(nb, Tint, wn_e, be_int) ! Integrated planck function intensity for internal temperature
 
-    !! Longwave flux calculation
+    !! Longwave flux calculation - sum over each band and g-ordinance
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
-      lw_up_b(b,:) = 0.0_dp
-      lw_down_b(b,:) = 0.0_dp
       do g = 1, ng
-        call lw_Toon89(nlay, nlev, be(b,:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf(b), &
-          & lw_up_g(g,:), lw_down_g(g,:))
-        lw_up_b(b,:) = lw_up_b(b,:) + lw_up_g(g,:) * gw(g)
-        lw_down_b(b,:) = lw_down_b(b,:) + lw_down_g(g,:) * gw(g)
+        call lw_Toon89_method(nlay, nlev, be(b,:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf, &
+          & lw_up_g(:), lw_down_g(:))
+        lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
+        lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
-      lw_up(:) = lw_up(:) + lw_up_b(b,:)
-      lw_down(:) = lw_down(:) + lw_down_b(b,:)
     end do
 
     !! Net lw fluxes at each level
@@ -116,9 +123,9 @@ contains
     !! Outgoing Longwave Radiation (olr)
     olr = lw_up(1)
 
-  end subroutine lw_Toon
+  end subroutine lw_Toon89
 
-  subroutine lw_Toon89(nlay, nlev, be, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
+  subroutine lw_Toon89_method(nlay, nlev, be, tau_in, w_in, g_in, a_surf_in, flx_up, flx_down)
     implicit none
 
     !! Input variables
@@ -146,7 +153,7 @@ contains
 
     real(dp), dimension(nlay) :: g, h, xj, xk
     real(dp), dimension(nlay) :: alpha1, alpha2, sigma1, sigma2
-    real(dp), dimension(nlay) :: em1, obj, epp, obj2, epp2, em2, em3
+    real(dp), dimension(nlay) :: em1, obj, epp, em2, em3
 
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
 
@@ -241,7 +248,6 @@ contains
       if (abs(xk2(n)/xkk(2*n-1)) < 1e-30_dp) then
         xk2(n) = 0.0_dp
       end if
-      !print*, xk1(n), xk2(n)
     end do
 
     where (w0(:) <= 1e-4_dp)
@@ -253,7 +259,7 @@ contains
       alpha2(:)=twopi*B1(:)
       sigma1(:)=alpha1(:)
       sigma2(:)=alpha2(:)
-    elsewhere 
+    elsewhere
       g(:)=twopi*w0(:)*xk1(:)*(1.0_dp+hg(:)*alp(:))/(1.0_dp+alp(:))
       h(:)=twopi*w0(:)*xk2(:)*(1.0_dp-hg(:)*alp(:))/(1.0_dp+alp(:))
       xj(:)=twopi*w0(:)*xk1(:)*(1.0_dp-hg(:)*alp(:))/(1.0_dp+alp(:))
@@ -267,8 +273,6 @@ contains
     obj(:) = min(lam(:)*dtau(:),35.0_dp)
     epp(:) = exp(obj(:))
     em1(:) = 1.0_dp/epp(:)
-    obj2(:) = min(0.5_dp*lam(:)*dtau(:),35.0_dp)
-    epp2(:) = exp(obj2(:))
 
     ! Zero the total flux arrays
     flx_up(:) = 0.0_dp
@@ -286,7 +290,7 @@ contains
       do k = 1, nlay
         lw_down_g(k+1) = lw_down_g(k)*em2(k) + &
         & (xj(k)/(lam(k)*uarr(m)+1.0_dp))*(epp(k)-em2(k)) + &
-        & (xk(k)/(lam(k)*uarr(m)-1.0_dp))*(em2(k)-em(k))+sigma1(k)*(1.0_dp-em2(k)) + &
+        & (xk(k)/(lam(k)*uarr(m)-1.0_dp))*(em2(k)-em1(k))+sigma1(k)*(1.0_dp-em2(k)) + &
         & sigma2(k)*(uarr(m)*em2(k)+dtau(k)-uarr(m))
       end do
 
@@ -304,7 +308,7 @@ contains
 
     end do
 
-  end subroutine lw_Toon89
+  end subroutine lw_Toon89_method
 
   subroutine dtridgl(l, af, bf, cf, df, xk)
     implicit none
@@ -314,9 +318,8 @@ contains
     real(dp), dimension(l), intent(out) :: xk
 
     integer :: i
-    integer, parameter :: nmax = 301
     real(dp) :: x
-    real(dp), dimension(nmax) :: as, ds
+    real(dp), dimension(l) :: as, ds
 
     as(l) = af(l)/bf(l)
     ds(l) = df(l)/bf(l)
@@ -335,54 +338,4 @@ contains
 
   end subroutine dtridgl
 
-  subroutine BB_integrate(n_b, Te, wn_e, be)
-    implicit none
-
-    integer, intent(in) :: n_b
-    real(dp), intent(in) :: Te
-    real(dp), dimension(n_b+1), intent(in) :: wn_e
-
-    real(dp), dimension(n_b), intent(out) :: be
-
-    integer :: ww, j, intitera
-    real(dp), dimension(n_b+1) :: iB
-    real(dp) :: x, x2, x3, itera, summ, dn
-
-    !! Code for integrating the blckbody function between two wavenumbers
-    !! This is a method that uses a sum convergence
-    !! Taken from: spectralcalc.com/blackbody/inband_radiance.html
-
-      if (Te < 1e-6_dp) then
-        be(:) = 0.0_dp
-        return
-      end if
-
-      do ww = 1, n_b+1
-
-        x = c1 * 100.0_dp * wn_e(ww)/ Te
-        x2 = x**2
-        x3 = x**3
-
-        itera = 2.0_dp + 20.0_dp/x
-        if (itera > 150) then
-          itera = 150
-        end if
-        intitera = int(itera)
-
-        summ = 0.0_dp
-        do j = 1, intitera + 1
-          dn = 1.0_dp/real(j,kind=dp)
-          summ = summ +  exp(-min(real(j,kind=dp)*x,300.0_dp))* &
-          & (x3 + (3.0_dp * x2 + 6.0_dp*(x+dn)*dn)*dn)*dn
-        end do
-
-        iB(ww) = n2 * (Te/c1)**(4) * summ
-      end do
-
-      do ww = 1, n_b
-        be(ww) = max(iB(ww+1) - iB(ww),0.0_dp)
-      end do
-
-  end subroutine BB_integrate
-
-end module lw_Toon_mod
+end module lw_Toon89_mod

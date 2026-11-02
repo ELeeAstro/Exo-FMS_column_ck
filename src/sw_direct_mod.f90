@@ -1,5 +1,6 @@
 !!!
 ! Elspeth KH Lee - Jun 2024 : Initial version
+!                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
 !
 ! sw: Direct beam component only
 !     Pros: Very very fast
@@ -18,15 +19,15 @@ module sw_direct_mod
 
 contains
 
-  subroutine sw_direct(nlev, nb, ng, gw, tau_e, mu_z, Finc, a_surf, sw_up, sw_down, sw_net, asr)
+  subroutine sw_direct(nlev, nb, ng, gw, tau_e, mu_z, Finc, sw_up, sw_down, sw_net, asr)
     implicit none
 
     !! Input variables
     integer, intent(in) :: nlev, nb, ng
-    real(dp), dimension(ng) :: gw
+    real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
-    real(dp), dimension(nlev) :: mu_z
-    real(dp), dimension(nb) :: Finc, a_surf
+    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: sw_up, sw_down, sw_net
@@ -34,31 +35,21 @@ contains
 
     !! Work variables
     integer :: b, g
-    real(dp), dimension(nb,nlev) :: sw_down_b, sw_up_b
-    real(dp), dimension(ng,nlev) :: sw_down_g, sw_up_g
+    real(dp), dimension(nlev) :: sw_up_g, sw_down_g
 
+    sw_up(:) = 0.0_dp
+    sw_down(:) = 0.0_dp
 
-    !! Shortwave flux calculation
+    !! Shortwave flux calculation - sum over each band and g-ordinance
     if (mu_z(nlev) > 0.0_dp) then
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
       do b = 1, nb
-        sw_down_b(b,:) = 0.0_dp
-        sw_up_b(b,:) = 0.0_dp
-        if (Finc(b) <= 0.0_dp) then
-          cycle
-        end if
+        if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_direct_beam(nlev, Finc(b), mu_z(:), tau_e(g,b,:), a_surf(b), sw_down_g(g,:), sw_up_g(g,:))
-          sw_down_b(b,:) = sw_down_b(b,:) + sw_down_g(g,:) * gw(g)
-          sw_up_b(b,:) = sw_up_b(b,:) + sw_up_g(g,:) * gw(g)
+          call sw_direct_beam(nlev, Finc(b), mu_z(:), tau_e(g,b,:), sw_down_g(:), sw_up_g(:))
+          sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
+          sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
-        sw_down(:) = sw_down(:) + sw_down_b(b,:)
-        sw_up(:) = sw_up(:) + sw_up_b(b,:)
       end do
-    else
-      sw_down(:) = 0.0_dp
-      sw_up(:) = 0.0_dp
     end if
 
     !! Net sw flux
@@ -69,11 +60,11 @@ contains
 
   end subroutine sw_direct
 
-  subroutine sw_direct_beam(nlev, F0_in, mu_in, tau_in, w_surf_in, flx_down, flx_up)
+  subroutine sw_direct_beam(nlev, F0_in, mu_in, tau_in, flx_down, flx_up)
     implicit none
 
     integer, intent(in) :: nlev
-    real(dp), intent(in) :: F0_in, w_surf_in
+    real(dp), intent(in) :: F0_in
     real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
 
     real(dp), dimension(nlev), intent(out) :: flx_down, flx_up
@@ -98,8 +89,8 @@ contains
       end do
     end if
 
-    flx_down(nlev) = flx_down(nlev) * (1.0_dp - w_surf_in) ! The surface flux for surface heating is the amount of flux absorbed by surface
-    flx_up(:) = 0.0_dp ! We assume no upward flux here even if surface albedo
+    ! Gas giant lower boundary - nothing is reflected back up
+    flx_up(:) = 0.0_dp
 
 
   end subroutine sw_direct_beam

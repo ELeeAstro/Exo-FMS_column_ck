@@ -84,6 +84,7 @@ More individual k-tables can be produced upon request and will be made available
 
 ### See FMS_RC.nml_RORR for a random overlap resort rebin example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_AEE for a adaptive equivalent extinction example using Burrows analytic CE abundances.
+### See FMS_RC.nml_EE for a flux-weighted equivalent extinction example using Burrows analytic CE abundances.
 ### See FMS_RC.nml_PM for a pre-mixed example using interpolation from the CE grid.
 
 In the file 'FMS_RC.nml' you can select different options that control the simulation, a default set-up for HD 209458b is provided.
@@ -91,27 +92,41 @@ In the file 'FMS_RC.nml' you can select different options that control the simul
 ### &FMS_RC_nml
 
 sw_scheme: \
-'sw_direct' - direct beam only \ 
+'sw_direct' - direct beam only \
 'sw_adding' - adding method \
 'sw_SDA' - SDA method \
-'sw_Toon' - Toon89 method \
-'sw_SH2' - SH2 method (experimental) \
-'sw_SH4' - SH4 method (experimental) \ 
+'sw_Toon89' - Toon89 method \
+'sw_SH2' - SH2 method (PICASO) \
+'sw_SH4' - SH4 method (PICASO) \
+'sw_AD' - adding-doubling method \
+'sw_Liou88' - delta-four-stream discrete ordinates method (Liou et al. 1988) \
 'sw_disort_ts' - two stream disort method \
+'sw_disort' - n-stream disort method (benchmark) \
 
 lw_scheme: \
 'lw_AA_E' - AA_E method \
 'lw_AA_L' - AA_L method \
 'lw_sc_linear' - sc linear method \
-'lw_VIM' - VIM method \
-'lw_Toon' - Toon89 method \ 
+'lw_sc_scat_ric' - sc discrete ordinates with multiple scattering (Riccati invariant imbedding) \
+'lw_VIM_E' - VIM method, exponential in tau Planck function (was 'lw_VIM') \
+'lw_VIM_L' - VIM method, linear in tau Planck function \
+'lw_Toon89' - Toon89 method \
+'lw_SH2' - SH2 method (PICASO) \
+'lw_SH4' - SH4 method (PICASO) \
+'lw_AD' - adding-doubling method \
+'lw_DDA' - four-stream discrete ordinates adding method (4DDA) \
+'lw_Fu97' - delta-two- and four-stream combination method (Fu et al. 1997) \
+'lw_TAS' - Chou et al. (1999) scaling with the Tang et al. (2018) adjustment \
+'lw_DFE' - discontinuous finite element method (absorption only, scattering ignored) \
 'lw_disort_ts' - two steam disort method \
+'lw_disort' - n-stream disort method (benchmark) \
 
 opac_scheme: \
 'ck' - Use the corr-k scheme here (only option)
 
 adj_scheme: \
-'Ray_dry' - Ray Pierrehumbert's dry convective adjustment scheme \
+'Ray_dry' or 'Pierrehumbert' - Ray Pierrehumbert's dry convective adjustment scheme \
+'Manabe' - Manabe, Smagorinsky & Strickler (1965) dry convective adjustment \
 'MLT' - Mixing length theory
 
 CE_scheme: \
@@ -175,6 +190,8 @@ gw - the Gaussian weights for the k-tables
 PM - .True. (for pre-mixed tables), .False. \
 RORR - .True. (for random overlap resort rebin), .False. \
 AEE - .True. (for adaptive equivalent extinction), .False. \
+EE - .True. (for flux-weighted equivalent extinction, following Exo-FMS_2), .False. - choose exactly one of PM, RORR, AEE, EE \
+EE_lw - EE longwave weighting: 'twoside' (default) or 'escape' \
 ck_interp -  1 = bilinear interpolate ck tables, 2 = Bezier interpolate ck tables \
 ck_form  - format of k-tables (2 = Helios-k format used here) \
 ck_sp - names of species for corr-k routines ('PM' for pre-mixed) \
