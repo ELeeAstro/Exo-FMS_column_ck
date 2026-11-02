@@ -76,15 +76,18 @@ for i in range(nT_HeH):
       kap_HeH[i,j] = np.log10(float(h[1]))
 
 # Read in wavenumber grid edges
-wl = np.loadtxt('../wavelengths_GCM_32.txt',skiprows=1)
+data = np.loadtxt('wl_R1e4.txt',skiprows=1)
+wl = data[:,1]
 nwl = len(wl)
-nb = len(wl) - 1
+nb = nwl
+#nb = len(wl) - 1
 
 
 wnb = 1.0/(wl / 1e4)
 wnb = wnb[::-1]
-wnb_c = np.zeros(nb)
-wnb_c = (wnb[0:-1] + wnb[1:])/2.0
+wnb_c = wnb
+#wnb_c = np.zeros(nb)
+#wnb_c = (wnb[0:-1] + wnb[1:])/2.0
 
 
 print(wnb)
@@ -113,8 +116,11 @@ for s in range(nsp):
 
 print('Outputting')
 
-fname_H2 = 'H2-H2_reform_'+str(nb)+'.txt'
+nb_2 = 'R1e4'
+
+fname_H2 = 'H2-H2_reform_'+str(nb_2)+'.txt'
 f = open(fname_H2,'w')
+f.write(str(sp[0]) + '\n')
 f.write(str(nT_H2) + ' ' +  str(nb) + ' ' + '\n')
 f.write(" ".join(str(g) for g in T_H2[:]) + '\n')
 f.write(" ".join(str(g) for g in wnb_c[:]) + '\n')
@@ -123,8 +129,9 @@ for t in range(nT_H2):
     f.write(" ".join(str(g) for g in k_wn_H2H2[t,:]) + '\n')
 f.close()
 
-fname_He = 'H2-He_reform_'+str(nb)+'.txt'
+fname_He = 'H2-He_reform_'+str(nb_2)+'.txt'
 f = open(fname_He,'w')
+f.write(str(sp[1]) + '\n')
 f.write(str(nT_He) + ' ' +  str(nb) + ' ' + '\n')
 f.write(" ".join(str(g) for g in T_He[:]) + '\n')
 f.write(" ".join(str(g) for g in wnb_c[:]) + '\n')
@@ -133,8 +140,9 @@ for t in range(nT_He):
     f.write(" ".join(str(g) for g in k_wn_H2He[t,:]) + '\n')
 f.close()
 
-fname_H = 'H2-H_reform_'+str(nb)+'.txt'
+fname_H = 'H2-H_reform_'+str(nb_2)+'.txt'
 f = open(fname_H,'w')
+f.write(str(sp[2]) + '\n')
 f.write(str(nT_H) + ' ' +  str(nb) + ' ' + '\n')
 f.write(" ".join(str(g) for g in T_H[:]) + '\n')
 f.write(" ".join(str(g) for g in wnb_c[:]) + '\n')
@@ -143,8 +151,9 @@ for t in range(nT_H):
     f.write(" ".join(str(g) for g in k_wn_H2H[t,:]) + '\n')
 f.close()
 
-fname_HeH = 'He-H_reform_'+str(nb)+'.txt'
+fname_HeH = 'He-H_reform_'+str(nb_2)+'.txt'
 f = open(fname_HeH,'w')
+f.write(str(sp[3]) + '\n')
 f.write(str(nT_HeH) + ' ' +  str(nb) + ' ' + '\n')
 f.write(" ".join(str(g) for g in T_HeH[:]) + '\n')
 f.write(" ".join(str(g) for g in wnb_c[:]) + '\n')

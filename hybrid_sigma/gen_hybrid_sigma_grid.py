@@ -17,12 +17,12 @@ import matplotlib.pylab as plt
 # For example 5e-2 rather than 1e-1 for a top level near 1e-1 pa
 # Zoom in on the scatter plot at lowest pressure to check if the target pressure is reached and adjust as appropriate
 
-p0 = 1.0e7 # 0 altitude level pressure [pa]
-pu = 1e1  # Highest altitude level pressure [pa]
-ps = 9e0   # Approx pressure of linear spacing start [pa] 
+p0 = 1e3 * 1e5 # 0 altitude level pressure [pa]
+pu = 5e-5  * 1e5# Highest altitude level pressure [pa]
+ps = 1e-3 * 1e5   # Approx pressure of linear spacing start [pa] 
 
 # Number of levels
-nlev = 41
+nlev = 61
 nlay = nlev - 1
 
 # Log-space pressure from p0 to pu
