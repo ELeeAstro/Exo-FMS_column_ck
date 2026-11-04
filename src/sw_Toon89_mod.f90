@@ -258,7 +258,7 @@ contains
     do n = 1, nlay
       xk1(n) = xk(2*n-1)+xk(2*n)
       xk2(n) = xk(2*n-1)-xk(2*n)
-      if (abs(xk2(n)/xk(2*n-1)) < 1e-30_dp) then
+      if (abs(xk2(n)) < 1e-30_dp*abs(xk(2*n-1))) then   ! (no 0/0 when both are zero)
         xk2(n) = 0.0_dp
       end if
     end do

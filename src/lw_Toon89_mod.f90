@@ -6,6 +6,7 @@
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
 !                - Nov 2026 : Optimisations - duplicate exponentials removed, per-angle divisions and
 !                             sources outside the sweep recurrences, contiguous per g-ordinance inputs
+!                - Nov 2026 : w capped at w_max (w = 1 gave NaN); accuracy is still poor as w -> 1
 !
 ! lw: Two-stream method following the "Toon89" method (Toon et al. 1989)
 !     Based on the CHIMERA code by Mike Line, but cleaned up slightly
@@ -28,6 +29,10 @@ module lw_Toon89_mod
   real(dp), parameter :: sb = 5.670374419e-8_dp
 
   real(dp), parameter :: ubari = 0.5_dp
+
+  !! Single scattering albedo cap - exactly conservative scattering (w = 1, eigenvalue lam = 0) makes the
+  !! tridiagonal system singular (as sw_Toon89)
+  real(dp), parameter :: w_max = 1.0_dp - 1.0e-12_dp
 
   !! Gauss quadrature variables, cosine angle values (uarr) and weights (w)
   !! here you can comment in/out groups of mu values for testing
@@ -175,6 +180,7 @@ contains
 
     ! Delta eddington scaling
     w0(:) = (1.0_dp - g_in(:)**2)*w_in(:)/(1.0_dp - w_in(:)*g_in(:)**2)
+    w0(:) = min(w0(:), w_max)
     dtau(:) = (1.0_dp - w_in(:)*g_in(:)**2)*dtau_in(:)
     hg(:) = g_in(:)/(1.0_dp + g_in(:))
 
@@ -255,7 +261,7 @@ contains
     do n = 1, nlay
       xk1(n) = xkk(2*n-1) + xkk(2*n)
       xk2(n) = xkk(2*n-1) - xkk(2*n)
-      if (abs(xk2(n)/xkk(2*n-1)) < 1e-30_dp) then
+      if (abs(xk2(n)) < 1e-30_dp*abs(xkk(2*n-1))) then   ! (no 0/0 when both are zero)
         xk2(n) = 0.0_dp
       end if
     end do

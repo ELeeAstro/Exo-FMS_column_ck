@@ -1273,14 +1273,15 @@ c
       DATA  abscut / 10. /, first / .TRUE. /
       real*8 chapmn,tplkavg,d1mach2
 c
-      IF ( first ) THEN
-         first    = .FALSE.
-         smallest = d1mach2(1)
-         biggest  = d1mach2(2)
-         pi       = 2. * ASIN( 1.0 )
-         nstr     = 2
-         nn       = nstr / 2
-      ENDIF
+c Set on every call: pi is local to settwo, and smallest, biggest, nstr, nn
+c are unsaved locals of twostr, so none of them keep their values between calls
+c (previously set on the first call only)
+      first    = .FALSE.
+      smallest = d1mach2(1)
+      biggest  = d1mach2(2)
+      pi       = 2. * ASIN( 1.0 )
+      nstr     = 2
+      nn       = nstr / 2
 c
       IF ( .NOT.usrtau ) THEN
 c

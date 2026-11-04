@@ -1296,9 +1296,12 @@ contains
       end select
       CIA(s)%lT = log10(CIA(s)%T(:))
       CIA(s)%lkap = log10(max(CIA(s)%kap(:,:), 1.0e-99_dp))
-      if ((CIA(s)%form /= 3) .and. ((size(CIA(s)%lx) < 3) .or. (size(CIA(s)%lT) < 3))) then
-        print*, 'CIA table needs >= 3 points on both axes for the Bezier interpolation: ', trim(CIA(s)%sp)
-        stop
+      ! (nested: lx is not allocated for form 3, and .and. does not short-circuit)
+      if (CIA(s)%form /= 3) then
+        if ((size(CIA(s)%lx) < 3) .or. (size(CIA(s)%lT) < 3)) then
+          print*, 'CIA table needs >= 3 points on both axes for the Bezier interpolation: ', trim(CIA(s)%sp)
+          stop
+        end if
       end if
     end do
 
