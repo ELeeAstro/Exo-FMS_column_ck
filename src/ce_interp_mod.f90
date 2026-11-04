@@ -200,6 +200,11 @@ module ce_interp_mod
 
   
   ! Perform Bezier interpolation
+  !! Monotonic quadratic Bezier interpolation through 3 points: the control point is set
+  !! from the weighted 3-point derivative at xi(2); if that control point is not strictly
+  !! between the interval's end values (overshoot, a local extremum or a flat interval),
+  !! the one-sided slope is used instead, which gives linear interpolation. x outside
+  !! [xi(1), xi(3)] gives the end value (no extrapolation).
   subroutine Bezier_interp(xi, yi, ni, x, y)
     implicit none
 
@@ -208,37 +213,30 @@ module ce_interp_mod
     real(dp), intent(in) :: x
     real(dp), intent(out) :: y
 
-    real(dp) :: dx, dx1, dy, dy1, wh, yc, t, wlim, wlim1
+    real(dp) :: dx, dx1, dy, dy1, ww, yc, t
 
-    !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
     dx = xi(2) - xi(1)
     dx1 = xi(3) - xi(2)
     dy = yi(2) - yi(1)
     dy1 = yi(3) - yi(2)
 
-    if ((x > xi(1)) .and. (x < xi(2))) then
+    if (x <= xi(2)) then
       ! left hand side interpolation
-      !print*,'left'
-      wh = dx1/(dx + dx1)
-      wlim = 1.0_dp + 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      wlim1 = 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if ((wh <= min(wlim,wlim1)) .or. (wh >= max(wlim,wlim1))) then
-        wh = 1.0_dp
+      ww = dx1/(dx + dx1)
+      yc = yi(2) - dx/2.0_dp * (ww*dy/dx + (1.0_dp - ww)*dy1/dx1)
+      if ((yc <= min(yi(1),yi(2))) .or. (yc >= max(yi(1),yi(2)))) then
+        yc = yi(2) - dx/2.0_dp * (dy/dx)
       end if
-      yc = yi(2) - dx/2.0_dp * (wh*dy/dx + (1.0_dp - wh)*dy1/dx1)
-      t = (x - xi(1))/dx
+      t = min(max((x - xi(1))/dx, 0.0_dp), 1.0_dp)
       y = (1.0_dp - t)**2 * yi(1) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(2)
-    else ! (x > xi(2) and x < xi(3)) then
+    else
       ! right hand side interpolation
-      !print*,'right'
-      wh = dx/(dx + dx1)
-      wlim = 1.0_dp/(1.0_dp - (dy1/dy) * (dx/dx1))
-      wlim1 = 1.0_dp + 1.0_dp/(1.0_dp - (dy/dy1) * (dx1/dx))
-      if ((wh <= min(wlim,wlim1)) .or. (wh >= max(wlim,wlim1))) then
-        wh = 1.0_dp
+      ww = dx/(dx + dx1)
+      yc = yi(2) + dx1/2.0_dp * (ww*dy1/dx1 + (1.0_dp - ww)*dy/dx)
+      if ((yc <= min(yi(2),yi(3))) .or. (yc >= max(yi(2),yi(3)))) then
+        yc = yi(2) + dx1/2.0_dp * (dy1/dx1)
       end if
-      yc = yi(2) + dx1/2.0_dp * (wh*dy1/dx1 + (1.0_dp - wh)*dy/dx)
-      t = (x - xi(2))/(dx1)
+      t = min(max((x - xi(2))/dx1, 0.0_dp), 1.0_dp)
       y = (1.0_dp - t)**2 * yi(2) + 2.0_dp*t*(1.0_dp - t)*yc + t**2*yi(3)
     end if
 

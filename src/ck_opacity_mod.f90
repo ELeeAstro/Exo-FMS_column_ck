@@ -3,6 +3,12 @@
 ! A large module for calculating corr-k, cia and rayleigh opacities
 !   - Nov 2026 : Flux-weighted equivalent extinction (EE) and the RORR rebinning fix, following
 !                Exo-FMS_2 (exp/*/srcmods/ck_opacity_mod.f90)
+!   - Nov 2026 : One shared monotonic Bezier interpolation (bezier_index, bezier_1D, bezier_2D,
+!                Bezier_interp - identical to Exo-FMS_2) for every interpolated opacity source
+!                with ck_interp = 2: k-tables in log10 T, log10 p; CIA form 3 in log10 T; CIA form 1
+!                in wn and log10 T; free-free tables (form 2) in log10 wl and log10 theta; all on
+!                log10 values, edge values outside the tables. The free-free tables now use their
+!                edge values outside the table (they gave zero below T = 5040/3.6 = 1400 K).
 !
 ! k-table mixing methods (ck_nml, choose one):
 !   PM   : a premixed table (one table, already per gram)
@@ -87,6 +93,11 @@ module ck_opacity_mod
     real(dp), allocatable, dimension(:) :: T  ! Temperature points in table (K)
 
     real(dp), allocatable, dimension(:,:) :: kap ! table values [Usually: cm5 molecule-2] (CARE: Check format units)
+
+    !! Interpolation axes and log10 table values (set after reading): lx - wn (form 1) or
+    !! log10 wl [A] (form 2); lT - log10 T (forms 1, 3) or log10 theta (form 2); lkap - log10 kap
+    real(dp), allocatable, dimension(:) :: lx, lT
+    real(dp), allocatable, dimension(:,:) :: lkap
 
   end type CIA_table
 
@@ -665,138 +676,23 @@ contains
     real(dp), intent(in) :: T, P
     real(dp), dimension(n_ck,n_g), intent(out) :: k_ck_sp
 
-    integer :: s, g
-    integer :: iT1, iT2, iT3, iP1, iP2, iP3
+    integer :: s, g, iT, iP
+    logical :: eT, eP
     real(dp) :: lT, lP
 
-    real(dp), dimension(3) :: lPa, lTa, lka, lka_ck
-
-    !! A large if block statement is used to determine if the T-p point
-    !! is within the ck table, then interpolates.
-    !! If T > Tmax, then T = Tmax, if P > Pmax, P = Pmax and if P < Pmin, P = Pmin
-    !! This is done to avoid crashes with k-tables that may not cover the intendend T-p range
+    !! Bezier interpolation of log10 k in log10 T and log10 p (shared with Exo-FMS_2), table
+    !! edge values outside the table.
     !! IT IS AVDISED TO CREATE k-tables WITHIN APPRORIATE T-p RANGES!!
 
     lT = log10(T)
     lP = log10(P)
 
     do s = 1, n_ck
-
-      ! Find temperature grid index triplet
-      call locate(ck(s)%T(:),T,iT2)
-      iT1 = iT2 - 1
-      iT3 = iT2 + 1
-
-      if (iT1 <= 0) then
-        iT1 = 1
-        iT2 = 2
-        iT3 = 3
-      else if (iT3 > ck(s)%nT) then
-        iT1 = ck(s)%nT - 2
-        iT2 = ck(s)%nT - 1
-        iT3 = ck(s)%nT
-      end if
-
-      lTa(1) = ck(s)%lT(iT1)
-      lTa(2) = ck(s)%lT(iT2)
-      lTa(3) = ck(s)%lT(iT3)
-
-      ! Find pressure grid index triplet
-      call locate(ck(s)%P(:),P,iP2)
-      iP1 = iP2 - 1
-      iP3 = iP2 + 1
-
-      if (iP1 <= 0) then
-        iP1 = 1
-        iP2 = 2
-        iP3 = 3
-      else if (iP3 > ck(s)%nP) then
-        iP1 = ck(s)%nP - 2
-        iP2 = ck(s)%nP - 1
-        iP3 = ck(s)%nP
-      end if
-
-      lPa(1) = ck(s)%lP(iP1)
-      lPa(2) = ck(s)%lP(iP2)
-      lPa(3) = ck(s)%lP(iP3)
-
-      if (T >= ck(s)%T(ck(s)%nT)) then
-        ! Temperature is too high, outside table range - use highest availible T data
-        if (P >= ck(s)%P(ck(s)%nP)) then
-           ! Pressure is too high, outside table range - use highest availible P data
-            k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,ck(s)%nT,ck(s)%nP,:)
-        else if (P <= ck(s)%P(1)) then
-           ! Pressure is too low, outside table range - use highest lowest P data
-           k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,ck(s)%nT,1,:)
-        else
-          ! Pressure is within table range, perform Bezier interpolation at highest T
-          do g = 1, ck(s)%nG
-            lka(1) = ck(s)%kap(b,ck(s)%nT,iP1,g)
-            lka(2) = ck(s)%kap(b,ck(s)%nT,iP2,g)
-            lka(3) = ck(s)%kap(b,ck(s)%nT,iP3,g)
-            call Bezier_interp(lPa(:), lka(:), 3, lP, k_ck_sp(s,g))
-            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
-          end do
-        end if
-      else if (T <= ck(s)%T(1)) then
-        ! Temperature is too low, outside table range - use lowest availible T data
-        if (P >= ck(s)%P(ck(s)%nP)) then
-           ! Pressure is too high, outside table range - use highest availible P data
-            k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,1,ck(s)%nP,:)
-        else if (P <= ck(s)%P(1)) then
-           ! Pressure is too low, outside table range - use highest lowest P data
-           k_ck_sp(s,:) = 10.0_dp**ck(s)%kap(b,1,1,:)
-        else
-          ! Pressure is within table range, perform linear interpolation at highest T
-          do g = 1, ck(s)%nG
-            lka(1) = ck(s)%kap(b,1,iP1,g)
-            lka(2) = ck(s)%kap(b,1,iP2,g)
-            lka(3) = ck(s)%kap(b,1,iP3,g)
-            call Bezier_interp(lPa(:), lka(:), 3, lP, k_ck_sp(s,g))
-            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
-          end do
-        end if
-      else
-        ! Temperature is within the normal range
-        if (P >= ck(s)%P(ck(s)%nP)) then
-          ! Pressure is too high, outside table range - use highest availible P
-          do g = 1, ck(s)%nG
-            lka(1) = ck(s)%kap(b,iT1,ck(s)%nP,g)
-            lka(2) = ck(s)%kap(b,iT2,ck(s)%nP,g)
-            lka(3) = ck(s)%kap(b,IT3,ck(s)%nP,g)
-            call Bezier_interp(lTa(:), lka(:), 3, lT, k_ck_sp(s,g))
-            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
-          end do
-        else if (P <= ck(s)%P(1)) then
-          ! Pressure is too low, outside table range - use lowest availible P
-          do g = 1, ck(s)%nG
-            lka(1) = ck(s)%kap(b,iT1,1,g)
-            lka(2) = ck(s)%kap(b,iT2,1,g)
-            lka(3) = ck(s)%kap(b,IT3,1,g)
-            call Bezier_interp(lTa(:), lka(:), 3, lT, k_ck_sp(s,g))
-            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
-          end do
-        else
-          ! Both pressure and temperature are within table bounds, perform Bezier interpolation 4 times
-          do g = 1, ck(s)%nG
-            lka(1) = ck(s)%kap(b,iT1,iP1,g)
-            lka(2) = ck(s)%kap(b,iT1,iP2,g)
-            lka(3) = ck(s)%kap(b,IT1,iP3,g)
-            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(1)) ! Result at T1, P_in
-            lka(1) = ck(s)%kap(b,iT2,iP1,g)
-            lka(2) = ck(s)%kap(b,iT2,iP2,g)
-            lka(3) = ck(s)%kap(b,IT2,iP3,g)
-            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(2)) ! Result at T2, P_in
-            lka(1) = ck(s)%kap(b,iT3,iP1,g)
-            lka(2) = ck(s)%kap(b,iT3,iP2,g)
-            lka(3) = ck(s)%kap(b,IT3,iP3,g)
-            call Bezier_interp(lPa(:), lka(:), 3, lP, lka_ck(3)) ! Result at T3, P_in
-            call Bezier_interp(lTa(:), lka_ck(:), 3, lT, k_ck_sp(s,g)) ! Result at T_in, P_in
-            k_ck_sp(s,g) = 10.0_dp**k_ck_sp(s,g)
-          end do
-        end if
-      end if
-
+      call bezier_index(ck(s)%lT(:), lT, iT, eT)
+      call bezier_index(ck(s)%lP(:), lP, iP, eP)
+      do g = 1, n_g
+        k_ck_sp(s,g) = 10.0_dp**bezier_2D(ck(s)%lT(:), ck(s)%lP(:), ck(s)%kap(b,:,:,g), lT, lP, iT, eT, iP, eP)
+      end do
     end do
 
   end subroutine interp_ck_sp_TP_Bezier
@@ -932,33 +828,14 @@ contains
     real(dp), dimension(n_sp), intent(in) :: VMR
     real(dp), intent(out) :: k_cont
 
-    integer, allocatable, dimension(:,:), save :: iwn, iwn1
-    logical, save :: f_call = .True.
+    integer :: s, ix, iT
+    logical :: ex, eT
+    real(dp) :: k_Hm, k_ff, kap, lT
 
-    integer :: s
-    integer :: iT, iT1
-    real(dp) :: k_Hm, k_ff
-    real(dp) :: x0, x1, y0, y1, xval, yval
-    real(dp) :: a00, a01, a10, a11, aval
+    !! Bezier interpolation (shared with Exo-FMS_2) of log10 kap, table edge values outside
+    !! the table (form 1: zero outside the table's wavenumber range, where there is no data)
 
-    ! If this is the first call, find the wavenumber index numbers
-    ! so we don't have to calculate them each time
-    if (f_call .eqv. .True.) then
-      if (allocated(iwn) .eqv. .False.) then
-        allocate(iwn(n_CIA,n_b), iwn1(n_CIA,n_b))
-      end if
-      do s = 1, n_CIA
-        if ((trim(CIA(s)%sp) == 'H-') .or. (CIA(s)%form == 2)) then
-          cycle
-        end if
-        call locate(CIA(s)%wn(:),wn(b),iwn(s,b))
-        iwn1(s,b) = iwn(s,b) + 1
-        !print*, wn(b), iwn(s,b), iwn1(s,b), CIA(s)%wn(iwn(s,b)), CIA(s)%wn(iwn1(s,b))
-      end do
-      if (b == n_b) then
-        f_call = .False.
-      end if
-    end if
+    lT = log10(T)
 
     k_cont = 0.0_dp
     do s = 1, n_CIA
@@ -968,79 +845,28 @@ contains
         k_cont = k_cont + k_Hm
         cycle
       end if
-      if (CIA(s)%form == 2) then
-        call CIA_ff(n_sp, s, b, T, N, VMR, k_ff)
+
+      select case (CIA(s)%form)
+      case (2)
+        ! Free-free table in log10 wl and log10 theta
+        call CIA_ff_Bezier(n_sp, s, b, T, N, VMR, k_ff)
         k_cont = k_cont + k_ff
-        !print*, s, b, k_ff
         cycle
-      end if
-      if (CIA(s)%form == 3) then
-        ! Table already on the model's bands - Bezier interpolation of log10 k in log10 T
-        ! (linear in T if the table has fewer than 3 temperatures), table edge values
-        ! outside the T range
-        k_cont = k_cont + CIA_T_Bezier(s, b, T) &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-        cycle
-      end if
+      case (3)
+        ! Table already on the model's bands - log10 T only
+        kap = CIA_T_Bezier(s, b, T)
+      case default
+        ! HITRAN table in wn and log10 T, sampled at the band centre
+        if ((wn(b) < CIA(s)%wn(1)) .or. (wn(b) > CIA(s)%wn(CIA(s)%nwl))) cycle
+        call bezier_index(CIA(s)%lx(:), wn(b), ix, ex)
+        call bezier_index(CIA(s)%lT(:), lT, iT, eT)
+        kap = 10.0_dp**bezier_2D(CIA(s)%lx(:), CIA(s)%lT(:), CIA(s)%lkap(:,:), wn(b), lT, ix, ex, iT, eT)
+      end select
 
-
-      ! If band is outside table wavelength range
-      if ((iwn1(s,b) > CIA(s)%nwl) .or. (iwn(s,b) < 1)) then
-        cycle
-      end if
-
-      ! Locate required T indexes in CIA wn array for layer temperature
-      call locate(CIA(s)%T(:),T,iT)
-      iT1 = iT + 1
-
-      !! Perform temperature edge case check
-      if (iT < 1) then
-        ! Temperature of layer is outside lower bounds of table
-        ! Perform wn linear interp to minval(T)
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        y0 = CIA(s)%kap(iwn(s,b),1) ; y1 = CIA(s)%kap(iwn1(s,b),1)
-
-        ! Perform log linear interpolation
-        call linear_interp(xval, x0, x1, y0, y1, yval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + yval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      else if (iT1 > CIA(s)%nT) then
-
-        ! Temperature of layer is outside upper bounds of table
-        ! Perform wn linear interp to maxval(T)
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        y0 = CIA(s)%kap(iwn(s,b),CIA(s)%nT) ; y1 = CIA(s)%kap(iwn1(s,b),CIA(s)%nT)
-
-        ! Perform log linear interpolation
-        call linear_interp(xval, x0, x1, y0, y1, yval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + yval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      else
-
-        !! wn and T are within the table bounds
-        xval = wn(b) ; x0 = CIA(s)%wn(iwn(s,b)) ; x1 = CIA(s)%wn(iwn1(s,b))
-        yval = T ; y0 = CIA(s)%T(iT) ; y1 = CIA(s)%T(iT1)
-        a00 = CIA(s)%kap(iwn(s,b),iT) ; a10 = CIA(s)%kap(iwn1(s,b),iT)
-        a01 = CIA(s)%kap(iwn(s,b),iT1) ; a11 = CIA(s)%kap(iwn1(s,b),iT1)
-
-        ! Perform bi-linear interpolation
-        call bilinear_interp(xval, yval, x0, x1, y0, y1, a00, a10, a01, a11, aval)
-
-        ! Add to result to work variable in units of [cm-1]
-        k_cont = k_cont + aval &
-          & * VMR(CIA(s)%iVMR(1)) * N &
-          & * VMR(CIA(s)%iVMR(2)) * N
-
-      end if
+      ! Add to result to work variable in units of [cm-1]
+      k_cont = k_cont + kap &
+        & * VMR(CIA(s)%iVMR(1)) * N &
+        & * VMR(CIA(s)%iVMR(2)) * N
 
     end do
 
@@ -1069,42 +895,14 @@ contains
   end function CIA_T_linear
 
   !! Form 3 CIA [cm5 molecule-2] of band b at temperature T: Bezier interpolation of log10 k
-  !! in log10 T with the same 3-point stencil as the k-tables, edge values outside
+  !! in log10 T (linear if the table has fewer than 3 temperatures), edge values outside
   real(dp) function CIA_T_Bezier(s, b, T) result(kap)
     implicit none
 
     integer, intent(in) :: s, b
     real(dp), intent(in) :: T
 
-    integer :: iT1, iT2, iT3, nT
-    real(dp), dimension(3) :: lTa, lka
-
-    nT = CIA(s)%nT
-    if (nT < 3) then
-      kap = CIA_T_linear(s, b, T)
-      return
-    end if
-
-    if (T <= CIA(s)%T(1)) then
-      kap = CIA(s)%kap(b,1)
-      return
-    else if (T >= CIA(s)%T(nT)) then
-      kap = CIA(s)%kap(b,nT)
-      return
-    end if
-
-    ! Temperature grid index triplet, T(iT2) < T <= T(iT3) except at the first interval
-    call locate(CIA(s)%T(:), T, iT2)
-    iT1 = iT2 - 1
-    iT3 = iT2 + 1
-    if (iT1 <= 0) then
-      iT1 = 1 ; iT2 = 2 ; iT3 = 3
-    end if
-
-    lTa(:) = log10(CIA(s)%T([iT1, iT2, iT3]))
-    lka(:) = log10(max(CIA(s)%kap(b,[iT1, iT2, iT3]), 1.0e-99_dp))
-    call Bezier_interp(lTa(:), lka(:), 3, log10(T), kap)
-    kap = 10.0_dp**kap
+    kap = 10.0_dp**bezier_1D(CIA(s)%lT(:), CIA(s)%lkap(b,:), log10(T))
 
   end function CIA_T_Bezier
 
@@ -1487,6 +1285,23 @@ contains
       end do
     end if
 
+    !! log10 copies of the CIA tables for the interpolation
+    do s = 1, n_CIA
+      if (trim(CIA(s)%sp) == 'H-') cycle
+      select case (CIA(s)%form)
+      case (1)
+        CIA(s)%lx = CIA(s)%wn(:)
+      case (2)
+        CIA(s)%lx = log10(CIA(s)%wl(:))
+      end select
+      CIA(s)%lT = log10(CIA(s)%T(:))
+      CIA(s)%lkap = log10(max(CIA(s)%kap(:,:), 1.0e-99_dp))
+      if ((CIA(s)%form /= 3) .and. ((size(CIA(s)%lx) < 3) .or. (size(CIA(s)%lT) < 3))) then
+        print*, 'CIA table needs >= 3 points on both axes for the Bezier interpolation: ', trim(CIA(s)%sp)
+        stop
+      end if
+    end do
+
     if (n_Ray > 0) then
       ! Read Rayleigh namelist
       allocate(Ray(n_Ray))
@@ -1635,6 +1450,30 @@ contains
 
   end subroutine CIA_Heminus
 
+  !! Free-free (form 2) table: Bezier interpolation of log10 kap in log10 wl and log10 theta,
+  !! theta = 5040/T, edge values outside the table
+  subroutine CIA_ff_Bezier(n_sp, s, b, T, Nl, VMR, kff)
+    implicit none
+
+    integer, intent(in) :: s, b, n_sp
+    real(dp), dimension(n_sp), intent(in) :: VMR
+    real(dp), intent(in) :: T, Nl
+    real(dp), intent(out) :: kff
+
+    integer :: iwl, iT
+    logical :: ewl, eT
+    real(dp) :: lwl, lth, aval
+
+    lwl = log10(wl(b) * 1.0e4_dp)
+    lth = log10(5040.0_dp / T)
+    call bezier_index(CIA(s)%lx(:), lwl, iwl, ewl)
+    call bezier_index(CIA(s)%lT(:), lth, iT, eT)
+    aval = 10.0_dp**bezier_2D(CIA(s)%lx(:), CIA(s)%lT(:), CIA(s)%lkap(:,:), lwl, lth, iwl, ewl, iT, eT)
+
+    kff = 1.0e-26_dp * aval * (VMR(CIA(s)%iVMR(1)) * Nl * VMR(CIA(s)%iVMR(2)) * Nl) * kb_cgs * T !! * P(e-) [dyne cm-2] * (H2 or He) [cm-3]
+
+  end subroutine CIA_ff_Bezier
+
   subroutine CIA_ff(n_sp, s, b, T, Nl, VMR, kff)
     implicit none
 
@@ -1648,28 +1487,17 @@ contains
     real(dp) :: xval, x0, x1, yval, y0, y1
     real(dp) :: a00, a10, a01, a11, aval
 
-    T5040 = 5040.0_dp / T
-    wlA = wl(b) * 1.0e4_dp
+    !! Outside the table: its edge values (this gave zero below T = 5040/3.6 = 1400 K)
+    T5040 = min(max(5040.0_dp / T, CIA(s)%T(1)), CIA(s)%T(CIA(s)%nT))
+    wlA = min(max(wl(b) * 1.0e4_dp, CIA(s)%wl(1)), CIA(s)%wl(CIA(s)%nwl))
 
     call locate(CIA(s)%wl(:),wlA,iwl)
+    iwl = min(max(iwl, 1), CIA(s)%nwl - 1)
     iwl1 = iwl + 1
 
-    !print*, s, b, wlA, CIA(s)%wl(iwl), CIA(s)%wl(iwl1)
-
-    if (iwl == 0 .or. iwl1 > CIA(s)%nwl) then
-       kff = 0.0_dp
-       return
-    end if
-
     call locate(CIA(s)%T(:),T5040,iT)
+    iT = min(max(iT, 1), CIA(s)%nT - 1)
     iT1 = iT + 1
-
-    !print*, s, b, T5040, CIA(s)%T(iT), CIA(s)%T(iT1)
-
-    if (iT == 0 .or. iT1 > CIA(s)%nT) then
-       kff = 0.0_dp
-       return
-    end if
 
     !! wn and T are within the table bounds
     xval = wlA ; x0 = CIA(s)%wl(iwl) ; x1 = CIA(s)%wl(iwl1)
@@ -1857,6 +1685,106 @@ contains
   end subroutine bilinear_log_interp
 
   ! Perform Bezier interpolation
+  !! ---------------------------------------------------------------------------------------
+  !! Shared opacity-table interpolation (identical in Exo-FMS_column_ck and Exo-FMS_2).
+  !! Monotonic quadratic Bezier interpolation on 3-point stencils, applied in log10 space
+  !! by the callers (log10 k against log10 T, log10 p, ...). Outside a table, or on its end
+  !! points, the edge value is used; a table axis with fewer than 3 points is interpolated
+  !! linearly (1D only - 2D tables must have >= 3 points on both axes).
+  !! ---------------------------------------------------------------------------------------
+
+  !! Stencil start i1 of xg(i1:i1+2) for x with xg(1) < x < xg(n) (edge = .false.), or the
+  !! edge index i1 = 1 or n (edge = .true.) when x is on or outside the end points.
+  !! Interior: xg(i1+1) < x <= xg(i1+2), except the first interval, xg(1) < x <= xg(2).
+  subroutine bezier_index(xg, x, i1, edge)
+    implicit none
+
+    real(dp), dimension(:), intent(in) :: xg
+    real(dp), intent(in) :: x
+    integer, intent(out) :: i1
+    logical, intent(out) :: edge
+
+    integer :: n
+
+    n = size(xg)
+    edge = .True.
+    if (x <= xg(1)) then
+      i1 = 1
+    else if (x >= xg(n)) then
+      i1 = n
+    else
+      edge = .False.
+      call locate(xg, x, i1)
+      i1 = min(max(i1 - 1, 1), n - 2)
+    end if
+
+  end subroutine bezier_index
+
+  !! Value at x of the 1D table f(xg): Bezier inside (linear if size(xg) < 3), edge values outside
+  real(dp) function bezier_1D(xg, f, x) result(val)
+    implicit none
+
+    real(dp), dimension(:), intent(in) :: xg, f
+    real(dp), intent(in) :: x
+
+    integer :: i1
+    logical :: edge
+
+    if (size(xg) == 1) then
+      val = f(1)
+    else if (size(xg) == 2) then
+      if (x <= xg(1)) then
+        val = f(1)
+      else if (x >= xg(2)) then
+        val = f(2)
+      else
+        val = f(1) + (f(2) - f(1)) * (x - xg(1)) / (xg(2) - xg(1))
+      end if
+    else
+      call bezier_index(xg, x, i1, edge)
+      if (edge) then
+        val = f(i1)
+      else
+        call Bezier_interp(xg(i1:i1+2), f(i1:i1+2), 3, x, val)
+      end if
+    end if
+
+  end function bezier_1D
+
+  !! Value at (x, y) of the 2D table f(xg, yg), with the stencils (ix, ex) and (iy, ey) from
+  !! bezier_index: Bezier in y at the three x stencil points, then in x; edge values outside
+  real(dp) function bezier_2D(xg, yg, f, x, y, ix, ex, iy, ey) result(val)
+    implicit none
+
+    real(dp), dimension(:), intent(in) :: xg, yg
+    real(dp), dimension(:,:), intent(in) :: f
+    real(dp), intent(in) :: x, y
+    integer, intent(in) :: ix, iy
+    logical, intent(in) :: ex, ey
+
+    integer :: i
+    real(dp), dimension(3) :: fx
+
+    if (ex .and. ey) then
+      val = f(ix,iy)
+    else if (ex) then
+      call Bezier_interp(yg(iy:iy+2), f(ix,iy:iy+2), 3, y, val)
+    else if (ey) then
+      call Bezier_interp(xg(ix:ix+2), f(ix:ix+2,iy), 3, x, val)
+    else
+      do i = 1, 3
+        call Bezier_interp(yg(iy:iy+2), f(ix+i-1,iy:iy+2), 3, y, fx(i))
+      end do
+      call Bezier_interp(xg(ix:ix+2), fx(:), 3, x, val)
+    end if
+
+  end function bezier_2D
+
+  !! Monotonic quadratic Bezier interpolation through 3 points: the control point is set
+  !! from the weighted 3-point derivative at xi(2); if that control point is not strictly
+  !! between the interval's end values (overshoot, a local extremum or a flat interval),
+  !! the one-sided slope is used instead, which gives linear interpolation. x outside
+  !! [xi(1), xi(3)] gives the end value (no extrapolation).
   subroutine Bezier_interp(xi, yi, ni, x, y)
     implicit none
 
@@ -1867,15 +1795,6 @@ contains
 
     real(dp) :: dx, dx1, dy, dy1, ww, yc, t
 
-    !! Monotonic quadratic Bezier interpolation through 3 points: the control point is set
-    !! from the weighted 3-point derivative at xi(2); if that control point is not strictly
-    !! between the interval's end values (overshoot, a local extremum or a flat interval),
-    !! the one-sided slope is used instead (ww = 1), which gives linear interpolation.
-    !! (Nov 2026: the limiter was the equivalent bound on ww, which divided by the slope
-    !! ratio and gave 1/0 for linear data and 0/0 for flat data; x outside [xi(1), xi(3)]
-    !! now gives the end value rather than extrapolating the quadratic.)
-
-    !xc = (xi(1) + xi(2))/2.0_dp ! Control point (no needed here, implicitly included)
     dx = xi(2) - xi(1)
     dx1 = xi(3) - xi(2)
     dy = yi(2) - yi(1)
@@ -1886,7 +1805,6 @@ contains
       ww = dx1/(dx + dx1)
       yc = yi(2) - dx/2.0_dp * (ww*dy/dx + (1.0_dp - ww)*dy1/dx1)
       if ((yc <= min(yi(1),yi(2))) .or. (yc >= max(yi(1),yi(2)))) then
-        ww = 1.0_dp
         yc = yi(2) - dx/2.0_dp * (dy/dx)
       end if
       t = min(max((x - xi(1))/dx, 0.0_dp), 1.0_dp)
@@ -1896,7 +1814,6 @@ contains
       ww = dx/(dx + dx1)
       yc = yi(2) + dx1/2.0_dp * (ww*dy1/dx1 + (1.0_dp - ww)*dy/dx)
       if ((yc <= min(yi(2),yi(3))) .or. (yc >= max(yi(2),yi(3)))) then
-        ww = 1.0_dp
         yc = yi(2) + dx1/2.0_dp * (dy1/dx1)
       end if
       t = min(max((x - xi(2))/dx1, 0.0_dp), 1.0_dp)
