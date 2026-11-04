@@ -10,7 +10,7 @@
 ! sw: alpha-4SDA - 4 stream analytic spherical harmonic method with doubling adding method (Zhang & Li 2013)
 !     Gives the same answer as sw_SH4 (to machine precision), but with 2x2 adding instead of a banded matrix
 ! Pros: Fast and accurate method with good multiple scattering approximation, no large matrix inversions
-! Cons: Single zenith angle (no zcorr), four-stream approximation
+! Cons: Four-stream approximation
 !!!
 
 module sw_SDA_mod
@@ -53,7 +53,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -70,7 +70,7 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
@@ -97,8 +97,8 @@ contains
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
-    real(dp), intent(in) :: F0_in
-    real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
+    real(dp), intent(in) :: F0_in, mu_in
+    real(dp), dimension(nlev), intent(in) :: tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
 
     !! Output variables
@@ -142,25 +142,11 @@ contains
 
     real(dp) :: mu_z, mu_l, rfc, rk1, rk2, ra3, rdelta, sq
 
-    real(dp), dimension(nlev) :: cum_trans
 
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
 
-      ! Check mu_z for spherical corrections
-      if (mu_in(nlev) == mu_in(1)) then
-        ! No zenith correction, use regular method
-        flx_down(:) = F0_in* mu_in(nlev) * exp(-tau_in(:)/mu_in(nlev))
-      else
-        ! Zenith angle correction, use cumulative transmission function
-        cum_trans(1) = tau_in(1)/mu_in(1)
-        do k = 1, nlev-1
-          cum_trans(k+1) = cum_trans(k) + (tau_in(k+1) - tau_in(k))/mu_in(k+1)
-        end do
-        do k = 1, nlev
-          flx_down(k) = F0_in * mu_in(nlev) * exp(-cum_trans(k))
-        end do
-      end if
+      flx_down(:) = F0_in*mu_in * exp(-(tau_in(:) - tau_in(1))/mu_in)
 
       flx_up(:) = 0.0_dp
 
@@ -193,7 +179,7 @@ contains
     dtau(:) = (1.0_dp - w_in(:)*fc(:))*dtau(:)
 
     !! Single zenith angle for the whole column (value at the lower boundary)
-    mu_z = mu_in(nlev)
+    mu_z = mu_in
 
     !! Start SDA calculation
 

@@ -39,9 +39,6 @@ k_IR = 1e-3
 fl = 1.0
 met = 0.0
 
-zcorr = .False.
-zcorr_meth = 1
-radius = 7.1492e7
 
 iIC = 4
 corr = .True.

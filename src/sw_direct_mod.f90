@@ -26,7 +26,7 @@ contains
     integer, intent(in) :: nlev, nb, ng
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -41,11 +41,11 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_direct_beam(nlev, Finc(b), mu_z(:), tau_e(g,b,:), sw_down_g(:), sw_up_g(:))
+          call sw_direct_beam(nlev, Finc(b), mu_z, tau_e(g,b,:), sw_down_g(:), sw_up_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
@@ -64,30 +64,13 @@ contains
     implicit none
 
     integer, intent(in) :: nlev
-    real(dp), intent(in) :: F0_in
-    real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
+    real(dp), intent(in) :: F0_in, mu_in
+    real(dp), dimension(nlev), intent(in) :: tau_in
 
     real(dp), dimension(nlev), intent(out) :: flx_down, flx_up
 
-    integer :: k
-    real(dp), dimension(nlev) :: cum_trans
-
     !! Calculate direct beam component only
-
-    ! Check mu_z for spherical corrections
-    if (mu_in(nlev) == mu_in(1)) then
-      ! No zenith correction, use regular method
-      flx_down(:) = F0_in* mu_in(nlev) * exp(-tau_in(:)/mu_in(nlev))
-    else
-      ! Zenith angle correction, use cumulative transmission function
-      cum_trans(1) = tau_in(1)/mu_in(1)
-      do k = 1, nlev-1
-        cum_trans(k+1) = cum_trans(k) + (tau_in(k+1) - tau_in(k))/mu_in(k+1)
-      end do
-      do k = 1, nlev
-        flx_down(k) = F0_in * mu_in(nlev) * exp(-cum_trans(k))
-      end do
-    end if
+    flx_down(:) = F0_in*mu_in * exp(-(tau_in(:) - tau_in(1))/mu_in)
 
     ! Gas giant lower boundary - nothing is reflected back up
     flx_up(:) = 0.0_dp

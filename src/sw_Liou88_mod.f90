@@ -31,7 +31,7 @@
 !   - mu0 is nudged off the k*mu0 = 1 resonance as in sw_SDA and sw_Toon89.
 !
 ! Pros: Four-stream accuracy with closed-form eigenvalues and only 2x2 matrix inversions
-! Cons: Single zenith angle (no zcorr), four-stream approximation
+! Cons: Four-stream approximation
 !!!
 
 module sw_Liou88_mod
@@ -75,7 +75,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -95,7 +95,7 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
 
       !! Legendre polynomials P_l(mu_i) at the streams and P_l(mu0), (-1)^l, and
       !! PS(l,i,j) = a_j P_l(mu_i) P_l(mu_j) - the same for every band and g-ordinance
@@ -106,7 +106,7 @@ contains
       end do
       do l = 0, nstr-1
         sgnl(l) = real(1 - 2*mod(l,2), dp)
-        Pl0(l) = Pleg(l, mu_z(nlev))
+        Pl0(l) = Pleg(l, mu_z)
       end do
       do j = 1, nmu
         do i = 1, nmu
@@ -121,7 +121,7 @@ contains
           tau_g(:) = tau_e(g,b,:)
           ssa_g(:) = ssa(g,b,:)
           gg_g(:) = gg(g,b,:)
-          call sw_Liou88_method(nlay, nlev, Finc(b), mu_z(:), tau_g, ssa_g, gg_g, PlU, Pl0, sgnl, PS, &
+          call sw_Liou88_method(nlay, nlev, Finc(b), mu_z, tau_g, ssa_g, gg_g, PlU, Pl0, sgnl, PS, &
             & sw_down_g(:), sw_up_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
@@ -142,8 +142,8 @@ contains
 
     !! Input variables
     integer, intent(in) :: nlay, nlev
-    real(dp), intent(in) :: F0_in
-    real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
+    real(dp), intent(in) :: F0_in, mu_in
+    real(dp), dimension(nlev), intent(in) :: tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
 
     !! Legendre tables (from the wrapper): P_l(mu_i), P_l(mu0), (-1)^l, a_j P_l(mu_i) P_l(mu_j)
@@ -158,7 +158,7 @@ contains
     integer :: k, l, i, j, m, lp1
     real(dp) :: mu_z, mu_l, f0, trC, detC, disc, rfc, w4
     real(dp), dimension(nlay) :: dtau, w0, fc, dtr, dtr_z
-    real(dp), dimension(nlev) :: T, cum_trans
+    real(dp), dimension(nlev) :: T
     real(dp), dimension(0:nstr) :: chi
     real(dp), dimension(0:nstr-1) :: om
     real(dp), dimension(nmu) :: kk, ee, v, d, Qp, Qm, Qs, Qd, Zs, Zd, Zp, Zm, rhs
@@ -180,20 +180,7 @@ contains
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
 
-      ! Check mu_z for spherical corrections
-      if (mu_in(nlev) == mu_in(1)) then
-        ! No zenith correction, use regular method
-        flx_down(:) = F0_in* mu_in(nlev) * exp(-tau_in(:)/mu_in(nlev))
-      else
-        ! Zenith angle correction, use cumulative transmission function
-        cum_trans(1) = tau_in(1)/mu_in(1)
-        do k = 1, nlev-1
-          cum_trans(k+1) = cum_trans(k) + (tau_in(k+1) - tau_in(k))/mu_in(k+1)
-        end do
-        do k = 1, nlev
-          flx_down(k) = F0_in * mu_in(nlev) * exp(-cum_trans(k))
-        end do
-      end if
+      flx_down(:) = F0_in*mu_in * exp(-(tau_in(:) - tau_in(1))/mu_in)
 
       flx_up(:) = 0.0_dp
 
@@ -209,7 +196,7 @@ contains
     dtau(:) = tau_in(2:) - tau_in(1:nlay)
 
     !! Single zenith angle for the whole column (value at the lower boundary)
-    mu_z = mu_in(nlev)
+    mu_z = mu_in
 
     !! Delta-M scaling (f = chi_4 = g**4 for HG, as Liou et al. 1988 and sw_SDA)
     fc(:) = g_in(:)**nstr

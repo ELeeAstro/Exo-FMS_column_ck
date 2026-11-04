@@ -10,7 +10,7 @@
 !     fluxes.get_reflected_SH and fluxes.setup_4_stream_fluxes, checked against PICASO commit 4524b70
 !     (Oct 2026) to 1e-14. Delta-M scaling (f = g**4) and one-term HG phase function as PICASO.
 !     Differences to PICASO: no Rayleigh, gas giant lower boundary, own banded solver,
-!     fluxes found row by row, single zenith angle (no zcorr). None change the solution.
+!     fluxes found row by row, single zenith angle. None change the solution.
 !     TTHG option: as PICASO, but delta-M uses the TTHG chi_nstr for w0 and dtau too (consistent).
 !     Pros: Most accurate sw scheme here, works well for clouds and hazes
 !     Cons: Banded matrix solve, ~5-8x slower than the two-stream methods
@@ -58,7 +58,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -75,7 +75,7 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
@@ -83,7 +83,7 @@ contains
           tau_g(:) = tau_e(g,b,:)
           ssa_g(:) = ssa(g,b,:)
           gg_g(:) = gg(g,b,:)
-          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z(nlev), tau_g, ssa_g, gg_g, &
+          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z, tau_g, ssa_g, gg_g, &
             & sw_down_g(:), sw_up_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
@@ -132,7 +132,7 @@ contains
 
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
-      cum_trans(:) = tau_in(:)/u0
+      cum_trans(:) = (tau_in(:) - tau_in(1))/u0
       flx_down(:) = F0PI * u0 * exp(-cum_trans(:))
       flx_up(:) = 0.0_dp
       return

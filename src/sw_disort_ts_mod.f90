@@ -28,7 +28,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -54,10 +54,10 @@ contains
     sw_down_d(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
 
       planck = .False.
-      umu0 =  mu_z(nlev)
+      umu0 =  mu_z
 
       !! Initialise arrays
       ggg(:) = 0.0_dp
@@ -76,7 +76,7 @@ contains
         do g = 1, ng
           ggg(1:nlay) = gg(g,b,:)
           ssalb(1:nlay) = ssa(g,b,:)
-          utau(1:nlev) = tau_e(g,b,:)
+          utau(1:nlev) = tau_e(g,b,:) - tau_e(g,b,1)
           do i = 1, nlay
             dtauc(i) = (tau_e(g,b,i+1) - tau_e(g,b,i))
           end do

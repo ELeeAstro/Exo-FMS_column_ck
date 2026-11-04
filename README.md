@@ -166,9 +166,6 @@ k_IR - IR band opacity (m2 kg-1) \
 fl - The Heng et al. (2011) parameter used for pressure dependent IR optical depths \
 met - metallicty in dex solar (M/H)
 
-zcorr - include zenith angle correction (.False.) \
-zcorr_meth - zenith angle correction method (1,2)  \
-radius - radius of the planet at surface (m)
 
 iIC - Initial condition selection integer (4 = Parmentier et al. (2015) profile using Tirr and Tint) \
 corr - Flag to perform the adiabatic gradient correction in the initial conditions \

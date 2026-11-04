@@ -94,10 +94,6 @@ program Exo_FMS_RC
 
   real(dp), allocatable, dimension(:) :: cp_bar, kappa_bar, Rd_bar
 
-  logical :: zcorr
-  integer :: zcorr_meth
-  real(dp) :: radius
-  real(dp), allocatable, dimension(:) :: mu_z_eff, alt, alp
 
   real(dp), allocatable, dimension(:) :: sw_up, sw_down, sw_net 
   real(dp), allocatable, dimension(:) :: lw_up, lw_down, lw_net 
@@ -121,7 +117,7 @@ program Exo_FMS_RC
   namelist /FMS_RC_nml/ sw_scheme, lw_scheme, opac_scheme, adj_scheme, CE_scheme, nlay, a_sh, b_sh, pref, &
           & t_step, nstep, Rd_air, cp_air, grav, mu_z, Tirr, Tint, k_V, k_IR, fl, met, &
           & iIC, corr, table_num, nb, ng, nsp, wl_sh,  stellarf_sh, n_ck, &
-          & n_cia, n_ray, Rs, sm_ax, zcorr, zcorr_meth, radius
+          & n_cia, n_ray, Rs, sm_ax
 
   namelist /sp_nml/ sp_list, VMR_tab_sh
 
@@ -203,7 +199,6 @@ program Exo_FMS_RC
   allocate(ssa(ng,nb,nlay), gg(ng,nb,nlay))
   allocate(k_sw(ng,nb,nlay), tau_sw(ng,nb,nlev), ssa_sw(ng,nb,nlay), gg_sw(ng,nb,nlay))
   allocate(VMR(nsp,nlay), mu(nlay))
-  allocate(alt(nlev), mu_z_eff(nlev), alp(nlev))
   allocate(sw_up(nlev), sw_down(nlev), sw_net(nlev))
   allocate(lw_up(nlev), lw_down(nlev), lw_net(nlev))
   allocate(Kzz(nlay), Kzz_e(nlev), Tl_rad(nlay))
@@ -222,9 +217,6 @@ program Exo_FMS_RC
   lw_down(:) = 0.0_dp
   lw_net(:) = 0.0_dp
   Kzz(:) = 0.0_dp
-  alt(:) = 0.0_dp
-  mu_z_eff(:) = 0.0_dp
-  alp(:) = 0.0_dp
   asr = 0.0_dp
   olr = 0.0_dp
 
@@ -329,69 +321,39 @@ program Exo_FMS_RC
       stop
     end select
 
-    !! Zenith angle geometric correction
-    if ((zcorr .eqv. .True.) .and. (mu_z > 0.0_dp)) then
-      ! First calculate the altitude at each level from the hypsometric equation
-      ! Assume constant gravity for simplicity
-      alt(nlev) = 0.0_dp
-      do k = nlay, 1, -1
-        alt(k) = alt(k+1) + (Rd_air*Tl(k))/grav * log(pe(k+1)/pe(k))
-      end do
-
-      select case(zcorr_meth)
-      case(1)
-        ! Basic geometric correction following Li & Shibata (2006) Eq. (2)
-        mu_z_eff(:) = sqrt(1.0_dp - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2))
-      case(2)
-        ! Spherical layer correction following Li & Shibata (2006) Eq.(10)
-        alp(nlev) = (alt(nlay) -  alt(nlev))/radius
-        do k = nlay,1,-1
-           alp(k) = (alt(k) -  alt(k+1))/(radius + alt(k))
-        end do
-        mu_z_eff(:) = (sqrt(1.0_dp - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2)) + &
-          & sqrt((1.0_dp + alp(:))**2 - (radius/(radius + alt(:)))**2 * (1.0_dp - mu_z**2))) / &
-          & (2.0_dp + alp(:))
-      case default
-        print*, 'Invalid zcorr_meth ', zcorr_meth
-        stop
-      end select
-    else
-      ! No correction, use single zenith angle
-      mu_z_eff(:) = mu_z
-    end if
 
     !! Shortwave radiative transfer step
     select case(sw_scheme)
     case('sw_direct')
       ! Direct beam only method with no scattering
-      call sw_direct(nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, sw_up, sw_down, sw_net, asr)
+      call sw_direct(nlev, nb, ng, gw, tau_sw, mu_z, Finc, sw_up, sw_down, sw_net, asr)
     case('sw_adding')
       ! Approximate adding method with approximate scattering
-      call sw_adding(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_adding(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_SDA')
       ! Spherical harmonic doubling adding (SDA) four stream method with multiple scattering
-      call sw_SDA(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_SDA(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_Toon89')
       ! Toon89 shortwave method with multiple scattering
-      call sw_Toon89(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_Toon89(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_disort_ts')
       ! Two stream disort method with multiple scattering
-      call sw_disort_ts(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_disort_ts(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_disort')
       ! n-stream disort method with multiple scattering - benchmark method
-      call sw_disort(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_disort(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_SH2')
       ! Two stream spherical harmonic method with multiple scattering (PICASO)
-      call sw_SH2(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_SH2(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_SH4')
       ! Four stream spherical harmonic method with multiple scattering (PICASO)
-      call sw_SH4(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_SH4(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_AD')
       ! Adding-doubling method with multiple scattering (AddingDoublingRT)
-      call sw_AD(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_AD(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('sw_Liou88')
       ! Delta-four-stream discrete ordinates method with multiple scattering (Liou et al. 1988)
-      call sw_Liou88(nlay, nlev, nb, ng, gw, tau_sw, mu_z_eff, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
+      call sw_Liou88(nlay, nlev, nb, ng, gw, tau_sw, mu_z, Finc, ssa_sw, gg_sw, sw_up, sw_down, sw_net, asr)
     case('none')
       sw_up(:) = 0.0_dp
       sw_down(:) = 0.0_dp

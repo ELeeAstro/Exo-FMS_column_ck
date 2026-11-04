@@ -38,7 +38,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -55,7 +55,7 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
@@ -83,7 +83,8 @@ contains
     !! Input variables
     integer, intent(in) :: nlay, nlev
     real(dp), intent(in) :: F0_in
-    real(dp), dimension(nlev), intent(in) :: tau_in, mu_in
+    real(dp), dimension(nlev), intent(in) :: tau_in
+    real(dp), intent(in) :: mu_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
 
     !! Output variables
@@ -92,27 +93,16 @@ contains
     !! Work variables
     integer :: k
     real(dp) :: f, den
-    real(dp), dimension(nlay) :: dtau, w0, hg, mu_l, T_dir, rmu_l
+    real(dp), dimension(nlay) :: dtau, w0, hg, T_dir
     real(dp), dimension(nlay) :: R_b, T_b, R_d, T_d
-    real(dp), dimension(nlev) :: T_beam, cum_trans
+    real(dp), dimension(nlev) :: T_beam
     real(dp), dimension(nlev) :: Ru_d, Ru_b, Rd_d, D_a
     real(dp) :: D
 
     !! If zero albedo across all atmospheric layers then return direct beam only
     if (all(w_in(:) <= 1.0e-12_dp)) then
 
-      ! Check mu_z for spherical corrections
-      if (mu_in(nlev) == mu_in(1)) then
-        ! No zenith correction, use regular method
-        flx_down(:) = F0_in * mu_in(nlev) * exp(-tau_in(:)/mu_in(nlev))
-      else
-        ! Zenith angle correction, use cumulative transmission function
-        cum_trans(1) = tau_in(1)/mu_in(1)
-        do k = 1, nlev-1
-          cum_trans(k+1) = cum_trans(k) + (tau_in(k+1) - tau_in(k))/mu_in(k+1)
-        end do
-        flx_down(:) = F0_in * mu_in(nlev) * exp(-cum_trans(:))
-      end if
+      flx_down(:) = F0_in*mu_in * exp(-(tau_in(:) - tau_in(1))/mu_in)
 
       flx_up(:) = 0.0_dp
 
@@ -128,23 +118,16 @@ contains
       hg(k) = g_in(k)/(1.0_dp + g_in(k))
     end do
 
-    !! Zenith angle in each layer and direct beam transmission to each level
-    if (mu_in(nlev) == mu_in(1)) then
-      mu_l(:) = mu_in(nlev)
-    else
-      mu_l(:) = mu_in(2:nlev)
-    end if
-    rmu_l(:) = 1.0_dp/mu_l(:)
     !! T_beam is the running product of the layer transmissions (one exponential per layer)
     T_beam(1) = 1.0_dp
     do k = 1, nlay
-      T_dir(k) = exp(-min(dtau(k)*rmu_l(k), e_max))
+      T_dir(k) = exp(-min(dtau(k)/mu_in, e_max))
       T_beam(k+1) = T_beam(k)*T_dir(k)
     end do
 
     !! Reflection and transmission of each layer
     do k = 1, nlay
-      call layer_RT(dtau(k), w0(k), hg(k), mu_l(k), T_dir(k), R_b(k), T_b(k), R_d(k), T_d(k))
+      call layer_RT(dtau(k), w0(k), hg(k), mu_in, T_dir(k), R_b(k), T_b(k), R_d(k), T_d(k))
     end do
 
     !! Upward pass - reflection of everything below each level for the beam (Ru_b) and diffuse (Ru_d)
@@ -177,8 +160,8 @@ contains
     end do
 
     !! Scale with the incident flux
-    flx_down(:) = flx_down(:) * mu_in(nlev) * F0_in
-    flx_up(:) = flx_up(:) * mu_in(nlev) * F0_in
+    flx_down(:) = flx_down(:) * mu_in * F0_in
+    flx_up(:) = flx_up(:) * mu_in * F0_in
 
   end subroutine sw_adding_method
 

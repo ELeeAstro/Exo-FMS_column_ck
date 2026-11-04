@@ -5,7 +5,7 @@
 !
 ! sw: n-stream DISORT method - intended as an accuracy benchmark
 !     Pros: Highly accurate reference solution, arbitrary stream number
-!     Cons: Very slow, single zenith angle so can't follow the zcorr beam path (unlike sw_Toon89 and sw_adding)
+!     Cons: Very slow, single zenith angle
 !
 ! Gas giant lower boundary - albedo = 0, so nothing is reflected back up (sw_up(nlev) = 0)
 !!!
@@ -37,7 +37,7 @@ contains
     real(dp), dimension(ng), intent(in) :: gw
     real(dp), dimension(ng,nb,nlev), intent(in) :: tau_e
     real(dp), dimension(ng,nb,nlay), intent(in) :: ssa, gg
-    real(dp), dimension(nlev), intent(in) :: mu_z
+    real(dp), intent(in) :: mu_z
     real(dp), dimension(nb), intent(in) :: Finc
 
     !! Output variables
@@ -52,11 +52,11 @@ contains
     sw_down(:) = 0.0_dp
 
     !! Shortwave flux calculation - sum over each band and g-ordinance
-    if (mu_z(nlev) > 0.0_dp) then
+    if (mu_z > 0.0_dp) then
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call call_DISORT(nlay, nlev, tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), mu_z(nlev), Finc(b), &
+          call call_DISORT(nlay, nlev, tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), mu_z, Finc(b), &
             & sw_up_g(:), sw_down_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
@@ -116,7 +116,7 @@ contains
     end do
 
     do i = 1, nlev
-      utau(i) = real(tau_e(i), dp)
+      utau(i) = real(tau_e(i) - tau_e(1), dp)
     end do
 
     !! Stellar beam only - no thermal source in the shortwave
