@@ -2,6 +2,8 @@
 ! Elspeth KH Lee - Jun 2024 : Initial version
 !                - Nov 2026 : Rewritten following PICASO exactly, enabled
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - compile-time band widths in the solver, contiguous per
+!                             g-ordinance inputs
 !
 ! sw: Four-stream spherical harmonic method (SH4) with multiple scattering (Rooney et al. 2024)
 !     Taken from PICASO (Batalha et al. 2019; Rooney et al. 2024) and converted to Fortran:
@@ -40,6 +42,9 @@ module sw_SH4_mod
   real(dp), parameter :: tthg_frac_a = 1.0_dp, tthg_frac_b = -1.0_dp
   integer, parameter :: tthg_frac_c = 2
 
+  !! Band widths of the four-stream matrix
+  integer, parameter :: kl = 5, ku = 5
+
   private :: sw_SH_four_stream, band_solve
   public :: sw_SH4
 
@@ -63,6 +68,8 @@ contains
     !! Work variables
     integer :: b, g
     real(dp), dimension(nlev) :: sw_up_g, sw_down_g
+    real(dp), dimension(nlev) :: tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     sw_up(:) = 0.0_dp
     sw_down(:) = 0.0_dp
@@ -72,7 +79,11 @@ contains
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z(nlev), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
+          ! Contiguous copies (avoids array temporaries for the strided slices)
+          tau_g(:) = tau_e(g,b,:)
+          ssa_g(:) = ssa(g,b,:)
+          gg_g(:) = gg(g,b,:)
+          call sw_SH_four_stream(nlay, nlev, Finc(b), mu_z(nlev), tau_g, ssa_g, gg_g, &
             & sw_down_g(:), sw_up_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
@@ -102,7 +113,6 @@ contains
 
     !! Work variables
     integer :: k, l, m, n
-    integer, parameter :: kl = 5, ku = 5
     real(dp) :: Del, b_top, b_surface, b_surface_SH4
     real(dp), dimension(nstr) :: Pu0
     real(dp), dimension(nlay) :: dtau, w0, f_deltaM, g_f, g_b, f_f
@@ -319,7 +329,7 @@ contains
       B(4*m+6) = z2pl_down(k+1) - z2pl_up(k)
     end do
 
-    call band_solve(n, kl, ku, Mb, B, X)
+    call band_solve(n, Mb, B, X)
 
     !! Level fluxes (PICASO F X + G) - top level from layer 1, level k+1 from the bottom of layer k
     flx_down(1) = p1mn(1)*X(1) + p1pl(1)*X(2) + p2mn(1)*X(3) + p2pl(1)*X(4) + z1mn_down(1)
@@ -345,10 +355,11 @@ contains
 
   !! Banded Gaussian elimination with partial pivoting (as LAPACK dgbsv)
   !! A(i,j) = ab(kl+ku+1+i-j,j), the top kl rows of ab are workspace
-  subroutine band_solve(n, kl, ku, ab, b, x)
+  !! (band widths kl, ku are module parameters, so the loop bounds are known at compile time)
+  subroutine band_solve(n, ab, b, x)
     implicit none
 
-    integer, intent(in) :: n, kl, ku
+    integer, intent(in) :: n
     real(dp), dimension(2*kl+ku+1, n), intent(inout) :: ab
     real(dp), dimension(n), intent(inout) :: b
     real(dp), dimension(n), intent(out) :: x

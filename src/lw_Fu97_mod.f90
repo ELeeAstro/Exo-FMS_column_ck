@@ -1,6 +1,8 @@
 !!!
 ! Elspeth KH Lee - Nov 2026 : Initial version
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - e^{-k dtau} once per layer, growing-mode kernel from the
+!                             transmissions, reciprocal angles, contiguous per g-ordinance inputs
 !
 ! lw: delta-two- and four-stream combination method (delta-2/4; Fu et al. 1997, J. Atmos. Sci.),
 !     thermal emission only.
@@ -53,6 +55,7 @@ module lw_Fu97_mod
   integer, parameter :: nmu = 2
   real(dp), dimension(nmu), parameter :: uarr = (/0.2113248654051871_dp, 0.7886751345948129_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.5_dp, 0.5_dp/)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   !! Single scattering albedo cap and minimum layer optical depth
   real(dp), parameter :: w_max = 1.0_dp - 1.0e-6_dp
@@ -86,6 +89,8 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -106,9 +111,13 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_Fu97_method(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_Fu97_method(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -136,13 +145,13 @@ contains
 
     !! Work variables and arrays
     integer :: k, i
-    real(dp), dimension(nlay) :: dtau, w0, f, hg, g1, g2, kk, rr, aa, B1, R, T, Eu, Ed, A, C
+    real(dp), dimension(nlay) :: dtau, w0, f, hg, g1, g2, kk, rr, aa, B1, R, T, Eu, Ed, A, C, ek
     real(dp), dimension(nlev) :: Rt, Sd, Rb, Su, Id2, Iu2
     real(dp), dimension(nmu,nlay) :: Tq, up_src, dn_src
     real(dp), dimension(nmu,nlev) :: lw_up_g, lw_down_g
     real(dp) :: e1, e2, den, m, a1, a2, det
     real(dp) :: Ipp0, Ipm0, IppD, IpmD
-    real(dp) :: Ti, pp, pm, wh, c0p, c0m, c1, alp_p, bet_p, alp_m, bet_m, Kdec, Kgro, lin1
+    real(dp) :: Ti, pp, pm, wh, c0p, c0m, c1, alp_p, bet_p, alp_m, bet_m, Kdec, Kgro, lin1, u, x
 
     !! Layer optical depths and single scattering albedo
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
@@ -171,11 +180,13 @@ contains
         Eu(k) = 0.0_dp
         Ed(k) = 0.0_dp
         B1(k) = 0.0_dp
+        ek(k) = 1.0_dp
         cycle
       end if
 
       !! Reflection and transmission (equal from both sides)
       e1 = exp(-kk(k)*dtau(k))
+      ek(k) = e1
       e2 = e1**2
       den = kk(k) + g1(k) + (kk(k) - g1(k))*e2
       R(k) = g2(k)*(1.0_dp - e2)/den
@@ -223,7 +234,7 @@ contains
         C(k) = 0.0_dp
         cycle
       end if
-      e1 = exp(-kk(k)*dtau(k))
+      e1 = ek(k)
       a1 = Id2(k) - (be(k) - aa(k)*B1(k))
       a2 = Iu2(k+1) - (be(k+1) + aa(k)*B1(k))
       det = 1.0_dp - (rr(k)*e1)**2
@@ -241,12 +252,13 @@ contains
         cycle
       end if
 
-      e1 = exp(-kk(k)*dtau(k))
+      e1 = ek(k)
       wh = 0.5_dp*w0(k)
 
       do i = 1, nmu
 
-        Ti = exp(-dtau(k)/uarr(i))
+        u = dtau(k)*ruarr(i)
+        Ti = exp(-u)
         Tq(i,k) = Ti
 
         !! Phase function between the four-stream and two-stream angles
@@ -265,9 +277,14 @@ contains
 
         !! Kernels over the layer for the upward ray (weight e^{-t/mu}/mu); the downward ray
         !! is the mirror t -> D - t (decaying and growing exponentials swap)
+        !! Kgro = (D/mu) (e^{-k D} - e^{-D/mu})/((1/mu - k) D), series near 1/mu = k
         Kdec = (1.0_dp - Ti*e1)/(1.0_dp + kk(k)*uarr(i))
-        Kgro = (dtau(k)/uarr(i))*exp(-min(kk(k), 1.0_dp/uarr(i))*dtau(k)) &
-          & * em1x(abs(kk(k) - 1.0_dp/uarr(i))*dtau(k))
+        x = (ruarr(i) - kk(k))*dtau(k)
+        if (abs(x) < 1.0e-4_dp) then
+          Kgro = u*merge(Ti, e1, ruarr(i) <= kk(k))*em1x(abs(x))
+        else
+          Kgro = u*(e1 - Ti)/x
+        end if
         lin1 = uarr(i)*(1.0_dp - Ti) - dtau(k)*Ti
 
         up_src(i,k) = c0p*(1.0_dp - Ti) + c1*lin1 + alp_p*Kdec + bet_p*Kgro

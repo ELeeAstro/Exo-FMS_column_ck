@@ -1,6 +1,9 @@
 !!!
 ! Elspeth KH Lee - Nov 2026 : Initial version
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - scattering kernels from the layer transmissions (no
+!                             exponentials in the source loop), reciprocal angles, contiguous
+!                             per g-ordinance inputs
 !
 ! lw: Variational Iteration Method, linear-in-tau Planck variant (alpha-4VIM_L)
 !     Follows the structure of Zhang et al. (2017) but with B(t) = B_k + B1 t inside each layer.
@@ -33,6 +36,7 @@ module lw_VIM_L_mod
   integer, parameter :: nmu = 4
   real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   private :: lw_VIM_L_fs, em1x, q2, q3
   public :: lw_VIM_L
@@ -62,6 +66,8 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -82,9 +88,13 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_VIM_L_fs(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_VIM_L_fs(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -116,7 +126,7 @@ contains
     real(dp), dimension(nmu) :: cw, b, y, Ap, Am, Pp, Pm, Zpp, Zpm, Hpp, Hpm
     real(dp), dimension(nmu, nlay) :: T, L, TE, G0, Sp, Sm
     real(dp), dimension(nmu, nlev) :: lw_up_g, lw_down_g
-    real(dp) :: a, u, emu, q2u, q3u
+    real(dp) :: a, u, emu, q2u, q3u, x, Ti, TEj
 
     !! Calculate dtau in each layer
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
@@ -140,10 +150,20 @@ contains
     !! Transmission and linear-source terms
     do k = 1, nlay
       do i = 1, nmu
-        TE(i,k) = exp(-eps(k)*dtau(k)/uarr(i))       ! AA transmission
-        G0(i,k) = dB(k)*em1x(eps(k)*dtau(k)/uarr(i)) ! = mu B1 (1 - TE)/eps
-        T(i,k) = exp(-dtau(k)/uarr(i))               ! full extinction transmission
-        L(i,k) = dB(k)*em1x(dtau(k)/uarr(i))         ! = mu B1 (1 - T)
+        x = eps(k)*dtau(k)*ruarr(i)
+        TE(i,k) = exp(-x)                            ! AA transmission
+        if (x < 1.0e-4_dp) then                      ! = mu B1 (1 - TE)/eps
+          G0(i,k) = dB(k)*em1x(x)
+        else
+          G0(i,k) = dB(k)*(1.0_dp - TE(i,k))/x
+        end if
+        x = dtau(k)*ruarr(i)
+        T(i,k) = exp(-x)                             ! full extinction transmission
+        if (x < 1.0e-4_dp) then                      ! = mu B1 (1 - T)
+          L(i,k) = dB(k)*em1x(x)
+        else
+          L(i,k) = dB(k)*(1.0_dp - T(i,k))/x
+        end if
       end do
     end do
 
@@ -182,7 +202,9 @@ contains
     !  Zpm = int e^{-eps t/mu_j}    e^{-t/mu_i} dt/mu_i
     !  Hpp = (mu_j/D) int e^{-t/mu_i}(1 - e^{-eps(D-t)/mu_j})/eps dt/mu_i = ((1-T_i) - Zpp)/y
     !  Hpm = (mu_j/D) int e^{-t/mu_i}(1 - e^{-eps t/mu_j})/eps    dt/mu_i = ((1-T_i) - Zpm)/y
-    ! with y = eps D/mu_j (series in y for y -> 0)
+    ! with y = eps D/mu_j (series in y for y -> 0).
+    ! All exponentials are products of T_i = e^{-D/mu_i} and TE_j = e^{-eps D/mu_j}:
+    !  Zpp = (D/mu_i)(TE_j - T_i)/((1/mu_i - eps/mu_j) D),  Zpm = (D/mu_i)(1 - T_i TE_j)/((1/mu_i + eps/mu_j) D)
     Sp(:,:) = 0.0_dp
     Sm(:,:) = 0.0_dp
 
@@ -195,26 +217,49 @@ contains
 
       Ap(:) = lw_up_g(:,k+1) - be(k+1)  ! homogeneous amplitude at layer base
       Am(:) = lw_down_g(:,k) - be(k)    ! homogeneous amplitude at layer top
-      b(:) = eps(k)/uarr(:)
-      y(:) = eps(k)*dtau(k)/uarr(:)
+      b(:) = eps(k)*ruarr(:)
+      y(:) = eps(k)*dtau(k)*ruarr(:)
 
       do i = 1, nmu
 
-        a = 1.0_dp/uarr(i)
+        a = ruarr(i)
         u = dtau(k)*a
-        emu = em1x(u)
-        q2u = q2(u)
-        q3u = q3(u)
+        Ti = T(i,k)
+
+        ! em1x(u), q2(u) and q3(u) from T_i
+        if (u < 1.0e-4_dp) then
+          emu = em1x(u)
+        else
+          emu = (1.0_dp - Ti)/u
+        end if
+        if (u < 1.0e-3_dp) then
+          q2u = q2(u)
+          q3u = q3(u)
+        else
+          q2u = 0.5_dp - (1.0_dp - emu)/u
+          q3u = (emu - Ti)/u - 0.5_dp*Ti
+        end if
 
         do j = 1, nmu
-          Zpp(j) = u * exp(-min(a,b(j))*dtau(k)) * em1x(abs(a - b(j))*dtau(k))
-          Zpm(j) = u * em1x((a + b(j))*dtau(k))
+          TEj = TE(j,k)
+          x = (a - b(j))*dtau(k)
+          if (abs(x) < 1.0e-4_dp) then
+            Zpp(j) = u * merge(Ti, TEj, a <= b(j)) * em1x(abs(x))
+          else
+            Zpp(j) = u * (TEj - Ti)/x
+          end if
+          x = (a + b(j))*dtau(k)
+          if (x < 1.0e-4_dp) then
+            Zpm(j) = u * em1x(x)
+          else
+            Zpm(j) = u * (1.0_dp - Ti*TEj)/x
+          end if
           if (y(j) < 1.0e-4_dp) then
             Hpp(j) = (1.0_dp - emu) - y(j)*q2u
-            Hpm(j) = (emu - T(i,k)) - y(j)*q3u
+            Hpm(j) = (emu - Ti) - y(j)*q3u
           else
-            Hpp(j) = ((1.0_dp - T(i,k)) - Zpp(j))/y(j)
-            Hpm(j) = ((1.0_dp - T(i,k)) - Zpm(j))/y(j)
+            Hpp(j) = ((1.0_dp - Ti) - Zpp(j))/y(j)
+            Hpm(j) = ((1.0_dp - Ti) - Zpm(j))/y(j)
           end if
         end do
 

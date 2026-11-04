@@ -2,6 +2,8 @@
 ! Elspeth KH Lee - Jun 2024 : Overhauled
 !                - Nov 2026 : Rewritten as a true layer-by-layer adding method
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - direct beam as a running product of the layer transmissions,
+!                             shared denominators, reciprocals, contiguous per g-ordinance inputs
 !
 ! sw: Adding method for shortwave radiation, used in various Earth GCMs (e.g. Mendonça et al. 2015, RRTMG)
 !     Each layer has its own delta-Eddington reflection and transmission (Meador & Weaver 1980),
@@ -46,6 +48,8 @@ contains
     !! Work variables
     integer :: b, g
     real(dp), dimension(nlev) :: sw_up_g, sw_down_g
+    real(dp), dimension(nlev) :: tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     sw_up(:) = 0.0_dp
     sw_down(:) = 0.0_dp
@@ -55,8 +59,10 @@ contains
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_adding_method(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-            & sw_down_g(:), sw_up_g(:))
+          tau_g(:) = tau_e(g,b,:)
+          ssa_g(:) = ssa(g,b,:)
+          gg_g(:) = gg(g,b,:)
+          call sw_adding_method(nlay, nlev, Finc(b), mu_z, tau_g, ssa_g, gg_g, sw_down_g, sw_up_g)
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
@@ -86,7 +92,7 @@ contains
     !! Work variables
     integer :: k
     real(dp) :: f, den
-    real(dp), dimension(nlay) :: dtau, w0, hg, mu_l, T_dir
+    real(dp), dimension(nlay) :: dtau, w0, hg, mu_l, T_dir, rmu_l
     real(dp), dimension(nlay) :: R_b, T_b, R_d, T_d
     real(dp), dimension(nlev) :: T_beam, cum_trans
     real(dp), dimension(nlev) :: Ru_d, Ru_b, Rd_d, D_a
@@ -128,12 +134,13 @@ contains
     else
       mu_l(:) = mu_in(2:nlev)
     end if
-    cum_trans(1) = 0.0_dp
+    rmu_l(:) = 1.0_dp/mu_l(:)
+    !! T_beam is the running product of the layer transmissions (one exponential per layer)
+    T_beam(1) = 1.0_dp
     do k = 1, nlay
-      T_dir(k) = exp(-min(dtau(k)/mu_l(k), e_max))
-      cum_trans(k+1) = cum_trans(k) + dtau(k)/mu_l(k)
+      T_dir(k) = exp(-min(dtau(k)*rmu_l(k), e_max))
+      T_beam(k+1) = T_beam(k)*T_dir(k)
     end do
-    T_beam(:) = exp(-min(cum_trans(:), e_max))
 
     !! Reflection and transmission of each layer
     do k = 1, nlay
@@ -188,8 +195,8 @@ contains
     real(dp) :: e1, e2, den, Tm, r1, r2, r3, r4, r5, t1, t2, t3
 
     !! Eddington coefficients
-    g1 = (7.0_dp - w0*(4.0_dp + 3.0_dp*g0))/4.0_dp
-    g2 = -(1.0_dp - w0*(4.0_dp - 3.0_dp*g0))/4.0_dp
+    g1 = 0.25_dp*(7.0_dp - w0*(4.0_dp + 3.0_dp*g0))
+    g2 = -0.25_dp*(1.0_dp - w0*(4.0_dp - 3.0_dp*g0))
     !! lambda (factored form avoids cancellation as w0 -> 1)
     lam = sqrt(3.0_dp*(1.0_dp - w0)*(1.0_dp - w0*g0))
 
@@ -201,9 +208,9 @@ contains
       R_d = g1*dtau/(1.0_dp + g1*dtau)
       T_d = 1.0_dp/(1.0_dp + g1*dtau)
     else
-      den = (lam + g1) + (lam - g1)*e2
-      R_d = g2*(1.0_dp - e2)/den
-      T_d = 2.0_dp*lam*e1/den
+      den = 1.0_dp/((lam + g1) + (lam - g1)*e2)
+      R_d = g2*(1.0_dp - e2)*den
+      T_d = 2.0_dp*lam*e1*den
     end if
 
     !! Direct beam - nudge mu0 off the lambda*mu0 = 1 resonance (0/0 in the formula)
@@ -241,8 +248,9 @@ contains
     Tm = T_dir
     if (mu /= mu0) Tm = exp(-min(dtau/mu, e_max))
 
-    R_b = w0*(r1 - r2*e2 - r3*e1*Tm)/(r4 + r5*e2)
-    T_b = -w0*((t1 - t2*e2)*Tm - t3*e1)/(r4 + r5*e2)
+    den = w0/(r4 + r5*e2)
+    R_b = (r1 - r2*e2 - r3*e1*Tm)*den
+    T_b = -((t1 - t2*e2)*Tm - t3*e1)*den
 
     R_b = max(R_b, 0.0_dp)
     T_b = max(T_b, 0.0_dp)

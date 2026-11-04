@@ -1,6 +1,9 @@
 !!!
 ! Elspeth KH Lee - Nov 2026 : Initial version
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - backscatter series coefficients once per call, series
+!                             stopped once g^l is negligible, (1 - T)/x source term from the
+!                             transmission, contiguous per g-ordinance inputs
 !
 ! lw: Chou et al. (1999) scaling with the Tang et al. (2018) adjustment scheme (TAS),
 !     thermal emission only. Used for longwave scattering in RTTOV and as the LW rescaling
@@ -47,13 +50,16 @@ module lw_TAS_mod
   !! Tang factor: 0.5 = exact TAS solution, 0.3 = Tang et al. (2018) suggestion, 0 = Chou scaling only
   real(dp), parameter :: tang_fact = 0.5_dp
 
-  !! Number of Legendre terms for the HG backscatter fraction series
+  !! Number of Legendre terms for the HG backscatter fraction series, and |g|^l below which the
+  !! series is stopped (the remaining terms are < 1e-17 for |g| < 0.86; larger |g| use all nleg terms)
   integer, parameter :: nleg = 256
+  real(dp), parameter :: gl_tol = 1.0e-17_dp
 
   !! Gauss–Jacobi-5 quadrature for 4 nodes - 8 stream (Hogan 2024)
   integer, parameter :: nmu = 4
   real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   private :: lw_TAS_method, em1x
   public :: lw_TAS
@@ -78,11 +84,15 @@ contains
     real(dp), intent(out) :: olr
 
     !! Work variables
-    integer :: k, b, g
+    integer :: k, b, g, l
     real(dp), dimension(nlev) :: Te
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
+    real(dp), dimension(0:nleg+1) :: P0
+    real(dp), dimension(nleg) :: cl2
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -99,13 +109,28 @@ contains
     end do
     call BB_integrate(nb, Tint, wn_e, be_int) ! Integrated planck function intensity for internal temperature
 
+    !! (2l+1) c_l^2 for odd l, c_l = int_0^1 P_l dmu = (P_(l-1)(0) - P_(l+1)(0))/(2l+1)
+    P0(0) = 1.0_dp
+    P0(1) = 0.0_dp
+    do l = 1, nleg
+      P0(l+1) = -real(l,dp)/real(l+1,dp)*P0(l-1)
+    end do
+    cl2(:) = 0.0_dp
+    do l = 1, nleg, 2
+      cl2(l) = (P0(l-1) - P0(l+1))**2/real(2*l+1,dp)
+    end do
+
     !! Longwave flux calculation - sum over each band and g-ordinance
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_TAS_method(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_TAS_method(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, cl2, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -119,7 +144,7 @@ contains
 
   end subroutine lw_TAS
 
-  subroutine lw_TAS_method(nlay, nlev, be, be_int, tau_in, w_in, g_in, flx_up, flx_down)
+  subroutine lw_TAS_method(nlay, nlev, be, be_int, tau_in, w_in, g_in, cl2, flx_up, flx_down)
     implicit none
 
     !! Input variables
@@ -127,39 +152,29 @@ contains
     real(dp), dimension(nlev), intent(in) :: be, tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
     real(dp), intent(in) :: be_int
+    real(dp), dimension(nleg), intent(in) :: cl2   ! (2l+1) c_l^2 (odd l)
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
     !! Work variables and arrays
     integer :: k, i, l
-    real(dp), dimension(0:nleg+1) :: P0
-    real(dp), dimension(nleg) :: cl2
     real(dp), dimension(nlay) :: w0, b, sc, dtau, kap, dB
     real(dp), dimension(nmu,nlay) :: T, Ls
     real(dp), dimension(nmu,nlev) :: lw_up_g, lw_down_g
     real(dp), dimension(nmu) :: dm0, dmD
-    real(dp) :: s, gl
-
-    !! (2l+1) c_l^2 for odd l, c_l = int_0^1 P_l dmu = (P_(l-1)(0) - P_(l+1)(0))/(2l+1)
-    P0(0) = 1.0_dp
-    P0(1) = 0.0_dp
-    do l = 1, nleg
-      P0(l+1) = -real(l,dp)/real(l+1,dp)*P0(l-1)
-    end do
-    cl2(:) = 0.0_dp
-    do l = 1, nleg, 2
-      cl2(l) = (P0(l-1) - P0(l+1))**2/real(2*l+1,dp)
-    end do
+    real(dp) :: s, gl, g2, x
 
     !! Single scattering albedo and HG hemispheric backscatter fraction
     w0(:) = min(max(w_in(:), 0.0_dp), 1.0_dp)
     do k = 1, nlay
       s = 0.0_dp
       gl = g_in(k)
+      g2 = g_in(k)**2
       do l = 1, nleg, 2
+        if (abs(gl) < gl_tol) exit
         s = s + cl2(l)*gl
-        gl = gl*g_in(k)**2
+        gl = gl*g2
       end do
       b(k) = min(max(0.5_dp - 0.5_dp*s, 0.0_dp), 1.0_dp)
     end do
@@ -173,8 +188,14 @@ contains
     dB(:) = be(2:nlev) - be(1:nlay)
     do k = 1, nlay
       do i = 1, nmu
-        T(i,k) = exp(-dtau(k)/uarr(i))
-        Ls(i,k) = dB(k)*em1x(dtau(k)/uarr(i)) ! = mu B1' (1 - T)
+        x = dtau(k)*ruarr(i)
+        T(i,k) = exp(-x)
+        ! = mu B1' (1 - T) = dB (1 - T)/x
+        if (x < 1.0e-4_dp) then
+          Ls(i,k) = dB(k)*em1x(x)
+        else
+          Ls(i,k) = dB(k)*(1.0_dp - T(i,k))/x
+        end if
       end do
     end do
 

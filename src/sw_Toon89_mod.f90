@@ -5,6 +5,9 @@
 !                - Oct 2026 : Exo-FMS_2 version, gas giant lower boundary
 !                - Nov 2026 : Resonance guard, zcorr energy conservation fix, renamed sw_Toon89 (was sw_Toon)
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - one beam exponential per level (shared by the direct beam
+!                             and the particular solution), reciprocal mu0, contiguous per
+!                             g-ordinance inputs
 !
 ! sw: Two-stream method following the "Toon89" method (Toon et al. 1989)
 !     Based on the CHIMERA code by Mike Line, but cleaned up slightly
@@ -49,6 +52,8 @@ contains
     !! Work variables
     integer :: b, g
     real(dp), dimension(nlev) :: sw_up_g, sw_down_g
+    real(dp), dimension(nlev) :: tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
     real(dp), parameter :: a_surf = 0.0_dp   ! gas giant: no reflecting lower boundary
 
     sw_up(:) = 0.0_dp
@@ -59,7 +64,11 @@ contains
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_Toon89_method(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), a_surf, &
+          ! Contiguous copies (avoids array temporaries for the strided slices)
+          tau_g(:) = tau_e(g,b,:)
+          ssa_g(:) = ssa(g,b,:)
+          gg_g(:) = gg(g,b,:)
+          call sw_Toon89_method(nlay, nlev, Finc(b), mu_z(:), tau_g, ssa_g, gg_g, a_surf, &
             & sw_down_g(:), sw_up_g(:))
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
@@ -91,8 +100,9 @@ contains
     integer :: k, i, n
     integer :: l, lm2, lm1
 
-    real(dp), dimension(nlev) :: dir, tau, cum_trans
-    real(dp), dimension(nlay) :: dtau_in, dtau, mu_zm, trans_top, trans_lay, F0_l
+    real(dp), dimension(nlev) :: dir, tau, cum_trans, ct
+    real(dp), dimension(nlay) :: dtau_in, dtau, mu_zm, rmu, trans_top, trans_lay, F0_l
+    logical, dimension(nlay) :: nudged
     real(dp), dimension(nlay) :: w0, hg
     real(dp), dimension(nlay) :: g1, g2, g3, g4
     real(dp), dimension(nlay) :: lam, gam, denom
@@ -155,12 +165,14 @@ contains
     end if
 
     !! Direct beam transmission to each level
-    cum_trans(1) = tau(1)/mu_zm(1)
+    rmu(:) = 1.0_dp/mu_zm(:)
+    cum_trans(1) = tau(1)*rmu(1)
     do k = 1, nlay
-      cum_trans(k+1) = cum_trans(k) + dtau(k)/mu_zm(k)
+      cum_trans(k+1) = cum_trans(k) + dtau(k)*rmu(k)
     end do
-    dir(:) = F0_in * mu_in(nlev) * exp(-cum_trans(:))
-    trans_top(:) = exp(-cum_trans(1:nlay))
+    ct(:) = exp(-cum_trans(:))
+    dir(:) = F0_in * mu_in(nlev) * ct(:)
+    trans_top(:) = ct(1:nlay)
 
     g1(:) = sqrt3d2 * (2.0_dp-w0(:)*(1.0_dp+hg(:)))
     g2(:) = (sqrt3d2*w0(:)) * (1.0_dp-hg(:))
@@ -174,25 +186,31 @@ contains
     !! Nudge mu0 off the lambda*mu0 = 1 resonance (0/0 in the particular solution)
     !! the nudged angle is only used in the layer's own particular solution
     do k = 1, nlay
-      if (abs(1.0_dp - lam(k)*mu_zm(k)) < res_eps) then
+      nudged(k) = abs(1.0_dp - lam(k)*mu_zm(k)) < res_eps
+      if (nudged(k)) then
         mu_zm(k) = mu_zm(k) + 2.0_dp*res_eps/lam(k)
+        rmu(k) = 1.0_dp/mu_zm(k)
       end if
     end do
     g3(:) = (1.0_dp - sqrt3*hg(:)*mu_zm(:))/2.0_dp
     g4(:) = 1.0_dp - g3(:)
 
     !! Beam flux in each layer, so the beam scatters exactly the energy it loses (energy conserving with zcorr)
-    F0_l(:) = F0_in * mu_in(nlev)/mu_zm(:)
+    F0_l(:) = F0_in * mu_in(nlev)*rmu(:)
 
-    denom(:) = lam(:)**2 - 1.0_dp/(mu_zm(:)**2)
-    Am(:) = F0_l(:) * w0(:) * (g4(:) * (g1(:) + 1.0_dp/mu_zm(:)) + g2(:)*g3(:))/denom(:)
-    Ap(:) = F0_l(:) * w0(:) * (g3(:) * (g1(:) - 1.0_dp/mu_zm(:)) + g2(:)*g4(:))/denom(:)
+    denom(:) = F0_l(:) * w0(:)/(lam(:)**2 - rmu(:)**2)
+    Am(:) = denom(:) * (g4(:) * (g1(:) + rmu(:)) + g2(:)*g3(:))
+    Ap(:) = denom(:) * (g3(:) * (g1(:) - rmu(:)) + g2(:)*g4(:))
 
     ! Cpm1 and Cmm1 are the C+ and C- terms evaluated at the top of the layer.
     Cpm1(:) = Ap(:) * trans_top(:)
     Cmm1(:) = Am(:) * trans_top(:)
     ! Cp and Cm are the C+ and C- terms evaluated at the bottom of the layer.
-    trans_lay(:) = trans_top(:) * exp(-dtau(:)/mu_zm(:))
+    ! (the beam transmission to the next level, except with the layer's nudged mu0)
+    trans_lay(:) = ct(2:nlev)
+    do k = 1, nlay
+      if (nudged(k)) trans_lay(k) = trans_top(k) * exp(-dtau(k)*rmu(k))
+    end do
     Cp(:) = Ap(:) * trans_lay(:)
     Cm(:) = Am(:) * trans_lay(:)
 

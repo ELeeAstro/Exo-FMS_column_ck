@@ -1,6 +1,8 @@
 !!!
 ! Elspeth KH Lee - Aug 2023 : Initial version
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - log(B ratio) once per layer (not per angle and sweep),
+!                             reciprocal angles, contiguous per g-ordinance inputs
 !
 ! lw: (Extended) Absorption Approximation following Li (2002) (alpha-nEAA) - This is the exoponential in tau method
 !     Pros: Very fast method with LW scattering approximation, no matrix inversions
@@ -46,6 +48,7 @@ module lw_AA_E_mod
   integer, parameter :: nmu = 4
   real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   private :: lw_AA_exp, aa_source_down, aa_source_up, exprel
   public :: lw_AA_E
@@ -75,6 +78,8 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -95,9 +100,13 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_AA_exp(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_AA_exp(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -125,8 +134,8 @@ contains
 
     !! Work variables
     integer :: k, m
-    real(dp), dimension(nlay) :: dtau, eps, dtau_a
-    real(dp), dimension(nlay) :: T
+    real(dp), dimension(nlay) :: dtau, eps, dtau_a, lr
+    real(dp), dimension(nlay) :: T, x
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
 
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
@@ -138,6 +147,9 @@ contains
     !! Absorption/modified optical depth for transmission function
     dtau_a(:) = eps(:)*dtau(:)
 
+    !! log of the Planck ratio across each layer (angle independent)
+    lr(:) = log(be(2:nlev)/be(1:nlay))
+
     ! Zero the total flux arrays
     flx_up(:) = 0.0_dp
     flx_down(:) = 0.0_dp
@@ -146,7 +158,8 @@ contains
     do m = 1, nmu
 
       !! Efficency variables
-      T(:) = exp(-dtau_a(:)/uarr(m))
+      x(:) = dtau_a(:)*ruarr(m)
+      T(:) = exp(-x(:))
 
       !! Begin two-stream loops
       !! Perform downward loop first - also calculate efficency variables
@@ -154,7 +167,7 @@ contains
       lw_down_g(1) = 0.0_dp
       do k = 1, nlay
         lw_down_g(k+1) = lw_down_g(k)*T(k) + &
-          & aa_source_down(be(k), be(k+1), dtau_a(k)/uarr(m), T(k))
+          & aa_source_down(be(k), be(k+1), x(k), T(k), lr(k))
       end do
 
       !! Perform upward loop
@@ -163,7 +176,7 @@ contains
 
       do k = nlay, 1, -1
         lw_up_g(k) = lw_up_g(k+1)*T(k) + &
-          & aa_source_up(be(k), be(k+1), dtau_a(k)/uarr(m), T(k))
+          & aa_source_up(be(k), be(k+1), x(k), T(k), lr(k))
       end do
 
       !! Sum up flux arrays with Gaussian quadrature weights and points for this mu stream
@@ -179,14 +192,14 @@ contains
 
   end subroutine lw_AA_exp
 
-  pure elemental function aa_source_down(btop, bbot, x, trans) result(source)
+  !! log_ratio = log(bbot/btop)
+  pure elemental function aa_source_down(btop, bbot, x, trans, log_ratio) result(source)
     implicit none
 
-    real(dp), intent(in) :: btop, bbot, x, trans
+    real(dp), intent(in) :: btop, bbot, x, trans, log_ratio
     real(dp) :: source
-    real(dp) :: log_ratio, z
+    real(dp) :: z
 
-    log_ratio = log(bbot/btop)
     z = x + log_ratio
 
     if (abs(z) < 1.0e-4_dp) then
@@ -197,14 +210,14 @@ contains
 
   end function aa_source_down
 
-  pure elemental function aa_source_up(btop, bbot, x, trans) result(source)
+  !! log_ratio = log(bbot/btop)
+  pure elemental function aa_source_up(btop, bbot, x, trans, log_ratio) result(source)
     implicit none
 
-    real(dp), intent(in) :: btop, bbot, x, trans
+    real(dp), intent(in) :: btop, bbot, x, trans, log_ratio
     real(dp) :: source
-    real(dp) :: log_ratio, z
+    real(dp) :: z
 
-    log_ratio = log(bbot/btop)
     z = log_ratio - x
 
     if (abs(z) < 1.0e-4_dp) then

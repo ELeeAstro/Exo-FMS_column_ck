@@ -3,6 +3,9 @@
 !                - Nov 2026 : Bug fixes (upward flux sign, P coefficient, diffuse R matrix, upward sweep),
 !                             delta-M (f = chi_4) as sw_SH4, TTHG option, single zenith angle, resonance guard
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - symmetric layer block reduction (2x2 inverses only), layer-last
+!                             array layout, direct beam as a running product of the layer
+!                             transmissions, reciprocals, contiguous per g-ordinance inputs
 !
 ! sw: alpha-4SDA - 4 stream analytic spherical harmonic method with doubling adding method (Zhang & Li 2013)
 !     Gives the same answer as sw_SH4 (to machine precision), but with 2x2 adding instead of a banded matrix
@@ -25,6 +28,7 @@ module sw_SDA_mod
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
   real(dp), parameter :: twopi = 2.0_dp * pi
   real(dp), parameter :: fourpi = 4.0_dp * pi
+  real(dp), parameter :: r_fourpi = 1.0_dp / fourpi
 
   !! Use Two-Term HG function (TTHG) for sph harmonic method, parameters are the PICASO defaults
   !! forward fraction = frac_a + frac_b*g_back**frac_c, g_forward = c_forward*g, g_back = c_back*g
@@ -59,6 +63,8 @@ contains
     !! Work variables
     integer :: b, g
     real(dp), dimension(nlev) :: sw_up_g, sw_down_g
+    real(dp), dimension(nlev) :: tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     sw_up(:) = 0.0_dp
     sw_down(:) = 0.0_dp
@@ -68,8 +74,10 @@ contains
       do b = 1, nb
         if (Finc(b) <= 0.0_dp) cycle
         do g = 1, ng
-          call sw_fs_SDA(nlay, nlev, Finc(b), mu_z(:), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-            & sw_down_g(:), sw_up_g(:))
+          tau_g(:) = tau_e(g,b,:)
+          ssa_g(:) = ssa(g,b,:)
+          gg_g(:) = gg(g,b,:)
+          call sw_fs_SDA(nlay, nlev, Finc(b), mu_z, tau_g, ssa_g, gg_g, sw_down_g, sw_up_g)
           sw_up(:) = sw_up(:) + sw_up_g(:) * gw(g)
           sw_down(:) = sw_down(:) + sw_down_g(:) * gw(g)
         end do
@@ -99,7 +107,7 @@ contains
     !! Work variables
     integer :: k
     real(dp), dimension(nlay) :: w0, dtau, g_f, g_b, f_f
-    real(dp), dimension(nlev) :: tau, T
+    real(dp), dimension(nlev) :: T
     real(dp) :: f0
     real(dp) :: om0, om1, om2, om3
     real(dp) :: a0, a1, a2, a3, b0, b1, b2, b3
@@ -110,17 +118,15 @@ contains
     real(dp) :: phi1p, phi1m, phi2p, phi2m
     real(dp) :: Cphi1p, Cphi1m, Cphi2p, Cphi2m
 
-    real(dp), dimension(4) :: H1, H2, H3, H4
-    real(dp), dimension(4) :: AA12H1
-    real(dp), dimension(4,4) :: AA1, AA2, AA1_i, AA12
-    real(dp), dimension(4) :: Fdir, Fdiffa, Fdiffb
+    real(dp), dimension(2) :: h1t, h1b, hs, hd, Xs, Yd
+    real(dp), dimension(2,2) :: Am, Ap, S1, D1, S2, D2, X, Y
 
-    real(dp), dimension(nlay,2) :: Rdir, Tdir
-    real(dp), dimension(nlay,2,2) :: Rdiff, Tdiff 
+    real(dp), dimension(2,nlay) :: Rdir, Tdir
+    real(dp), dimension(2,2,nlay) :: Rdiff, Tdiff
 
-    real(dp), dimension(nlev,2) :: RkN, U, D
-    real(dp), dimension(nlev,2,2) :: RbkN
-    real(dp), dimension(nlay,2,2) :: Minv
+    real(dp), dimension(2,nlev) :: RkN, D
+    real(dp), dimension(2,2,nlev) :: RbkN
+    real(dp), dimension(2,2,nlay) :: Minv
 
     real(dp), dimension(2,2) :: E, TT, CC
     real(dp), dimension(2) ::  DD
@@ -132,9 +138,9 @@ contains
 
     integer :: l, lp1
 
-    real(dp), dimension(nlay) :: dtr
+    real(dp), dimension(nlay) :: dtr, dtr_z
 
-    real(dp) :: mu_z, mu_l
+    real(dp) :: mu_z, mu_l, rfc, rk1, rk2, ra3, rdelta, sq
 
     real(dp), dimension(nlev) :: cum_trans
 
@@ -167,8 +173,9 @@ contains
 
     !! Phase function Legendre moments chi_l (HG: chi_l = g**l)
     if (TTHG .eqv. .False.) then
-      do l = 1, nstr
-        chi(l,:) = g_in(:)**l
+      chi(1,:) = g_in(:)
+      do l = 2, nstr
+        chi(l,:) = chi(l-1,:)*g_in(:)
       end do
     else
       g_f(:) = tthg_forward*g_in(:)
@@ -188,22 +195,17 @@ contains
     !! Single zenith angle for the whole column (value at the lower boundary)
     mu_z = mu_in(nlev)
 
-    !! Reform edge optical depths
-    tau(1) = 0.0_dp
-    do k = 1, nlay
-      tau(k+1) = tau(k) + dtau(k)
-    end do
-
     !! Start SDA calculation
 
     !! First find the Reflection and Transmission coefficents (direct and diffuse) for each layer
     do k = 1, nlay
 
       !! Omega Legendre polynomial coefficents - scale with delta-M (isotropic for g = 0)
+      rfc = 1.0_dp/(1.0_dp - fc(k))
       om0 = 1.0_dp
-      om1 = 3.0_dp * (chi(1,k) - fc(k))/(1.0_dp - fc(k))
-      om2 = 5.0_dp * (chi(2,k) - fc(k))/(1.0_dp - fc(k))
-      om3 = 7.0_dp * (chi(3,k) - fc(k))/(1.0_dp - fc(k))
+      om1 = 3.0_dp * (chi(1,k) - fc(k))*rfc
+      om2 = 5.0_dp * (chi(2,k) - fc(k))*rfc
+      om3 = 7.0_dp * (chi(3,k) - fc(k))*rfc
 
       !! Find the a coefficents
       a0 =  1.0_dp - w0(k)*om0 + eps_20
@@ -216,28 +218,33 @@ contains
       gam = (1.0_dp/9.0_dp)*a0*a1*a2*a3
 
       !! Find k values - lambda in Rooney
-      k1 = (beta + sqrt((beta**2 - 4.0_dp*gam)))/2.0_dp
-      k2 = (beta - sqrt((beta**2 - 4.0_dp*gam)))/2.0_dp
-
-      k1 = sqrt(k1)
-      k2 = sqrt(k2)
+      sq = sqrt(beta**2 - 4.0_dp*gam)
+      k1 = sqrt(0.5_dp*(beta + sq))
+      k2 = sqrt(0.5_dp*(beta - sq))
+      rk1 = 1.0_dp/k1
+      rk2 = 1.0_dp/k2
 
       !! Zenith angle for this layer - nudge mu0 off the k*mu0 = 1 resonance (0/0 in the particular solution)
       mu_l = mu_z
-      if (abs(1.0_dp - k1*mu_l) < res_eps) mu_l = mu_l + 2.0_dp*res_eps/k1
-      if (abs(1.0_dp - k2*mu_l) < res_eps) mu_l = mu_l + 2.0_dp*res_eps/k2
-
-      !! Layer transmission
-      dtr(k) = exp(-dtau(k)/mu_l)
+      if (abs(1.0_dp - k1*mu_l) < res_eps) mu_l = mu_l + 2.0_dp*res_eps*rk1
+      if (abs(1.0_dp - k2*mu_l) < res_eps) mu_l = mu_l + 2.0_dp*res_eps*rk2
 
       !! Inverse zenith angle
       f0 = 1.0_dp/mu_l
 
+      !! Layer transmission (and at the un-nudged mu0 for the direct beam)
+      dtr(k) = exp(-dtau(k)*f0)
+      if (mu_l == mu_z) then
+        dtr_z(k) = dtr(k)
+      else
+        dtr_z(k) = exp(-dtau(k)/mu_z)
+      end if
+
       !! Find the b coefficents - normalise Finc to 1 here
-      b0 = w0(k)*om0 / fourpi
-      b1 = w0(k)*om1 * -(mu_l) / fourpi
-      b2 = 0.5_dp * w0(k)*om2 * (3.0_dp * mu_l**2 - 1.0_dp) / fourpi
-      b3 = 0.5_dp * w0(k)*om3 * (5.0_dp * -mu_l**3 - 3.0_dp*-(mu_l)) / fourpi
+      b0 = w0(k)*om0 * r_fourpi
+      b1 = w0(k)*om1 * -(mu_l) * r_fourpi
+      b2 = 0.5_dp * w0(k)*om2 * (3.0_dp * mu_l**2 - 1.0_dp) * r_fourpi
+      b3 = 0.5_dp * w0(k)*om3 * (5.0_dp * -mu_l**3 - 3.0_dp*-(mu_l)) * r_fourpi
 
       !! Find e values
       e1 = exp(-k1*dtau(k))
@@ -247,12 +254,13 @@ contains
       !! NOTE: Zhang et al. (2013) has the wrong coefficent definitions
       !! Rooney et al. (2023) has the correct definitions and order in the matrix
       !! So we use the Rooney definitions, but keep the Zhang notation
-      Q1 = -3.0_dp/2.0_dp * (a0*a1/k1 - k1)/a3
-      Q2 = -3.0_dp/2.0_dp * (a0*a1/k2 - k2)/a3
-      R1 = -a0/k1
-      R2 = -a0/k2
-      P1 = 0.5_dp * (a0*a1/k1**2 - 1.0_dp)
-      P2 = 0.5_dp * (a0*a1/k2**2 - 1.0_dp)
+      ra3 = 1.0_dp/a3
+      Q1 = -1.5_dp * (a0*a1*rk1 - k1)*ra3
+      Q2 = -1.5_dp * (a0*a1*rk2 - k2)*ra3
+      R1 = -a0*rk1
+      R2 = -a0*rk2
+      P1 = 0.5_dp * (a0*a1*rk1**2 - 1.0_dp)
+      P2 = 0.5_dp * (a0*a1*rk2**2 - 1.0_dp)
 
       !! Find the delta values
       delta = 9.0_dp*(f0**4 - beta*f0**2 + gam)
@@ -262,10 +270,11 @@ contains
       del3 = (a2*b3 - 3.0_dp*b2*f0)*(a0*a1 - f0**2) + f0**2*(6.0_dp*a0*b1 - 4.0_dp*a0*b3 - 6.0_dp*b0*f0)
 
       !! Find the eta values
-      eta0 = del0/delta
-      eta1 = del1/delta
-      eta2 = 0.625_dp * del2/delta
-      eta3 = del3/delta
+      rdelta = 1.0_dp/delta
+      eta0 = del0*rdelta
+      eta1 = del1*rdelta
+      eta2 = 0.625_dp * del2*rdelta
+      eta3 = del3*rdelta
 
       !! Find the phi values
       phi1p = twopi*(0.5_dp + R1 + 5.0_dp/8.0_dp*P1)
@@ -285,72 +294,38 @@ contains
       z2p = twopi*(-1.0_dp/8.0_dp*eta0 + eta2 + eta3)
       z2m = twopi*(-1.0_dp/8.0_dp*eta0 + eta2 - eta3)
 
-      !! Find A1 matrix
-      AA1(1,1) = phi1m ; AA1(1,2) = phi1p*e1 ; AA1(1,3) = phi2m ; AA1(1,4) = phi2p*e2
-      AA1(2,1) = Cphi1m ; AA1(2,2) = Cphi1p*e1 ; AA1(2,3) = Cphi2m; AA1(2,4) = Cphi2p*e2
-      AA1(3,1) = phi1p*e1 ; AA1(3,2) = phi1m ; AA1(3,3) = phi2p*e2 ; AA1(3,4) = phi2m    
-      AA1(4,1) = Cphi1p*e1 ; AA1(4,2) = Cphi1m ; AA1(4,3) = Cphi2p*e2 ; AA1(4,4) = Cphi2m
+      !! Boundary value problem. With the columns ordered (mode 1 and 2 decaying from the top | from
+      !! the bottom), the 4x4 matrices of Zhang & Li (2013) / Rooney et al. (2023) have the layer's
+      !! up-down symmetry, A1 = [[Am, Ap E], [Ap E, Am]] and A2 = [[Am E, Ap], [Ap, Am E]], E = diag(e1, e2),
+      !! rows (phi, Phi) at the two boundaries. Both are block diagonal in the sum / difference basis, so
+      !! A2 A1^-1 = 1/2 [[X + Y, X - Y], [X - Y, X + Y]],  X = S2 S1^-1,
+      !! Y = D2 D1^-1, S1/D1 = Am +/- Ap E, S2/D2 = Am E +/- Ap - two 2x2 inverses instead of the 4x4
+      !! adjugate inverse.
+      Am(1,1) = phi1m ; Am(1,2) = phi2m ; Am(2,1) = Cphi1m ; Am(2,2) = Cphi2m
+      Ap(1,1) = phi1p ; Ap(1,2) = phi2p ; Ap(2,1) = Cphi1p ; Ap(2,2) = Cphi2p
+      S1(:,1) = Am(:,1) + Ap(:,1)*e1 ; S1(:,2) = Am(:,2) + Ap(:,2)*e2
+      D1(:,1) = Am(:,1) - Ap(:,1)*e1 ; D1(:,2) = Am(:,2) - Ap(:,2)*e2
+      S2(:,1) = Am(:,1)*e1 + Ap(:,1) ; S2(:,2) = Am(:,2)*e2 + Ap(:,2)
+      D2(:,1) = Am(:,1)*e1 - Ap(:,1) ; D2(:,2) = Am(:,2)*e2 - Ap(:,2)
+      X(:,:) = matmul(S2(:,:), matinv2(S1(:,:)))
+      Y(:,:) = matmul(D2(:,:), matinv2(D1(:,:)))
 
-      !! Find H1 vector
-      H1(1) = -z1m ;  H1(2) = -z2m ;  H1(3) = -z1p * dtr(k) ; H1(4) = -z2p * dtr(k)
+      !! Diffuse reflection and transmission (no normalisation): Tdiff = (X + Y)/2, Rdiff = (X - Y)/2
+      Tdiff(:,:,k) = 0.5_dp*(X(:,:) + Y(:,:))
+      Rdiff(:,:,k) = 0.5_dp*(X(:,:) - Y(:,:))
 
-      !! Find A2 matrix
-      AA2(1,1) = phi1m*e1 ; AA2(1,2) = phi1p ; AA2(1,3) = phi2m*e2 ; AA2(1,4) = phi2p
-      AA2(2,1) = Cphi1m*e1 ; AA2(2,2) = Cphi1p ; AA2(2,3) = Cphi2m*e2; AA2(2,4) = Cphi2p
-      AA2(3,1) = phi1p ; AA2(3,2) = phi1m*e1 ; AA2(3,3) = phi2p ; AA2(3,4) = phi2m*e2    
-      AA2(4,1) = Cphi1p ; AA2(4,2) = Cphi1m*e1 ; AA2(4,3) = Cphi2p ; AA2(4,4) = Cphi2m*e2
-
-      !! Find H2 vector
-      H2(1) = z1m * dtr(k) ;  H2(2) = z2m * dtr(k) ;  H2(3) = z1p ; H2(4) = z2p
-
-      !! Now we need to invert the A1 matrix - Zhang and Li (2013) use a adjugate matrix method 
-      !! with some reduction in the matrix order or used symetrical term (not 100% sure what they did)
-      !! We primarily use the same method but keep the 4x4 layout
-      !! We have LU decomposition here as an alternative in case of numerical instability (and for testing)
-
-      AA1_i(:,:) = matinv4(AA1(:,:)) ! Use matrix determinant and adjugate method (faster but can be numerically unstable)
-      !call inv_LU(AA1,4,4,AA1_i)    ! Use LU decomposition (slower but probably more stable)
-
-      !! Multiply the AA1_i and AA2 matrices
-      AA12(:,:) = matmul(AA2(:,:),AA1_i(:,:))
-
-      !! Multiply the AA12 and H2 matrix
-      AA12H1(:) = matmul(AA12(:,:),H1(:))
-
-      !! Direct flux component - now we have the flux array (F(1)(2) = neg flux at lower,F(3)(4) = pos flux at upper)
-      Fdir(:) = AA12H1(:) + H2(:)
-
-      !! Store the direct beam reflection and transmission for this layer - normalised by the beam flux (=1 here)
-      Rdir(k,1) = Fdir(3)/mu_l
-      Rdir(k,2) = Fdir(4)/mu_l
-
-      Tdir(k,1) = Fdir(1)/mu_l
-      Tdir(k,2) = Fdir(2)/mu_l
-
-      !! Now find the diffusive flux component
-
-      !! Vector H3 is
-      H3(1) = 1.0_dp; H3(2) = 0.0_dp; H3(3) = 0.0_dp; H3(4) = 0.0_dp 
-
-      !! Multiply the AA12 and H3 matrix to get `a' boundary fluxes at layer edges (levels)
-      Fdiffa(:) = matmul(AA12(:,:),H3(:))
-
-      !! Vector H4 is
-      H4(1) = 0.0_dp; H4(2) = 1.0_dp; H4(3) = 0.0_dp; H4(4) = 0.0_dp 
-
-      !! Multiply the AA12 and H4 matrix to get `b' boundary fluxes at layer edges (levels)
-      Fdiffb(:) = matmul(AA12(:,:),H4(:))
-
-      !! Store the diffuse reflection and transmission for this layer - no normalisation
-      Rdiff(k,1,1) = Fdiffa(3)
-      Rdiff(k,1,2) = Fdiffb(3)
-      Rdiff(k,2,1) = Fdiffa(4)
-      Rdiff(k,2,2) = Fdiffb(4)
-  
-      Tdiff(k,1,1) = Fdiffa(1)
-      Tdiff(k,1,2) = Fdiffb(1)
-      Tdiff(k,2,1) = Fdiffa(2)
-      Tdiff(k,2,2) = Fdiffb(2)
+      !! Direct beam: F = A2 A1^-1 H1 + H2, with H1 = (-z1m, -z2m | -z1p T, -z2p T),
+      !! H2 = (z1m T, z2m T | z1p, z2p) - normalised by the beam flux (= 1 here)
+      h1t(1) = -z1m ; h1t(2) = -z2m
+      h1b(1) = -z1p*dtr(k) ; h1b(2) = -z2p*dtr(k)
+      hs(:) = h1t(:) + h1b(:)
+      hd(:) = h1t(:) - h1b(:)
+      Xs(:) = matmul(X(:,:), hs(:))
+      Yd(:) = matmul(Y(:,:), hd(:))
+      Tdir(1,k) = (0.5_dp*(Xs(1) + Yd(1)) + z1m*dtr(k))*f0
+      Tdir(2,k) = (0.5_dp*(Xs(2) + Yd(2)) + z2m*dtr(k))*f0
+      Rdir(1,k) = (0.5_dp*(Xs(1) - Yd(1)) + z1p)*f0
+      Rdir(2,k) = (0.5_dp*(Xs(2) - Yd(2)) + z2p)*f0
 
     end do
 
@@ -363,11 +338,15 @@ contains
     !! (identical to the two-sided adding, ~1/3 less work)
 
     ! Lower boundary - gas giant, no reflection
-    RkN(nlev,:) = 0.0_dp
-    RbkN(nlev,:,:) = 0.0_dp
+    RkN(:,nlev) = 0.0_dp
+    RbkN(:,:,nlev) = 0.0_dp
 
-    !! Direct beam transmission to level
-    T(:) = exp(-tau(:)/mu_z)
+    !! Direct beam transmission to level - running product of the layer transmissions (a new
+    !! exponential only where mu0 was nudged off a resonance in that layer)
+    T(1) = 1.0_dp
+    do k = 1, nlay
+      T(k+1) = T(k)*dtr_z(k)
+    end do
 
     !! E indentity matrix
     E(1,1) = 1.0_dp ; E(1,2) = 0.0_dp ; E(2,1) = 0.0_dp ; E(2,2) = 1.0_dp
@@ -375,34 +354,32 @@ contains
     do l = nlay, 1, -1
       lp1 = l + 1
 
-      TT(:,:) = E(:,:) - matmul(RbkN(lp1,:,:),Rdiff(l,:,:))
-      TT(:,:) = matinv2(TT(:,:))
+      TT(:,:) = matinv2(E(:,:) - matmul(RbkN(:,:,lp1),Rdiff(:,:,l)))
 
-      CC(:,:) = matmul(Tdiff(l,:,:),TT(:,:))
+      CC(:,:) = matmul(Tdiff(:,:,l),TT(:,:))
 
-      DD(:) = RkN(lp1,:)*dtr(l) + matmul(RbkN(lp1,:,:),Tdir(l,:))
-      RkN(l,:) = Rdir(l,:) + matmul(CC(:,:), DD(:))
+      DD(:) = RkN(:,lp1)*dtr(l) + matmul(RbkN(:,:,lp1),Tdir(:,l))
+      RkN(:,l) = Rdir(:,l) + matmul(CC(:,:), DD(:))
 
-      CC(:,:) = matmul(CC(:,:),RbkN(lp1,:,:))
+      CC(:,:) = matmul(CC(:,:),RbkN(:,:,lp1))
 
-      RbkN(l,:,:) = Rdiff(l,:,:) + matmul(CC(:,:),Tdiff(l,:,:))
+      RbkN(:,:,l) = Rdiff(:,:,l) + matmul(CC(:,:),Tdiff(:,:,l))
 
-      Minv(l,:,:) = matinv2(E(:,:) - matmul(Rdiff(l,:,:),RbkN(lp1,:,:)))
+      Minv(:,:,l) = matinv2(E(:,:) - matmul(Rdiff(:,:,l),RbkN(:,:,lp1)))
 
     end do
 
-    D(1,:) = 0.0_dp
+    D(:,1) = 0.0_dp
     do l = 1, nlay
-      DD(:) = matmul(Tdiff(l,:,:),D(l,:)) + Tdir(l,:)*T(l) + matmul(Rdiff(l,:,:),RkN(l+1,:))*T(l+1)
-      D(l+1,:) = matmul(Minv(l,:,:),DD(:))
-    end do
-    do k = 1, nlev
-      U(k,:) = matmul(RbkN(k,:,:),D(k,:)) + RkN(k,:)*T(k)
+      DD(:) = matmul(Tdiff(:,:,l),D(:,l)) + Tdir(:,l)*T(l) + matmul(Rdiff(:,:,l),RkN(:,l+1))*T(l+1)
+      D(:,l+1) = matmul(Minv(:,:,l),DD(:))
     end do
 
-    !! Down and up fluxes are multiplied by the incident flux
-    flx_down(:) = (D(:,1) + T(:))*mu_z*F0_in
-    flx_up(:) = U(:,1)*mu_z*F0_in
+    !! Down and up fluxes are multiplied by the incident flux (U_k = RbkN_k D_k + RkN_k T_k, first moment)
+    do k = 1, nlev
+      flx_down(k) = (D(1,k) + T(k))*mu_z*F0_in
+      flx_up(k) = (RbkN(1,1,k)*D(1,k) + RbkN(1,2,k)*D(2,k) + RkN(1,k)*T(k))*mu_z*F0_in
+    end do
 
   end subroutine sw_fs_SDA
 

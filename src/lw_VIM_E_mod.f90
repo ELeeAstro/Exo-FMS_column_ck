@@ -3,6 +3,9 @@
 !                - Nov 2026 : Renamed lw_VIM_E; phase function pairing and scattering-integral
 !                             weights corrected; rewritten in the style of lw_VIM_L
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - scattering kernels from the layer transmissions (no
+!                             exponentials in the source loop), log(B ratio) once per layer,
+!                             reciprocal angles, contiguous per g-ordinance inputs
 !
 ! lw: Variational Iteration Method, exponential-in-tau Planck variant (alpha-4VIM_E)
 !     Follows Zhang et al. (2017, J. Atmos. Sci. 74, 419) with B(t) = B_k e^{-beta t} inside
@@ -44,6 +47,7 @@ module lw_VIM_E_mod
   integer, parameter :: nmu = 4
   real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp /)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   private :: lw_VIM_E_fs, aa_source_down, aa_source_up, em1x, exprel
   public :: lw_VIM_E
@@ -73,6 +77,8 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -93,9 +99,13 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_VIM_E_fs(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_VIM_E_fs(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -123,11 +133,11 @@ contains
 
     !! Work variables and arrays
     integer :: k, i, j
-    real(dp), dimension(nlay) :: dtau, f, w0, hg, epsg, eps, beta
+    real(dp), dimension(nlay) :: dtau, f, w0, hg, epsg, eps, beta, lr
     real(dp), dimension(nmu) :: cw, b, cp, cm, Ap, Am, Pp, Pm, Zpp, Zpm
     real(dp), dimension(nmu, nlay) :: TG, TE, T, Sp, Sm
     real(dp), dimension(nmu, nlev) :: lw_up_g, lw_down_g
-    real(dp) :: a, u, d, Pi_up, Pi_dn
+    real(dp) :: a, u, d, Pi_up, Pi_dn, x, Ti, TEj
 
     !! Calculate dtau in each layer
     dtau(:) = tau_in(2:nlev) - tau_in(1:nlay)
@@ -142,7 +152,8 @@ contains
     dtau(:) = max(dtau(:), dtau_floor)
 
     !! Exponential-in-tau Planck function: B(t) = B_k e^{-beta t}
-    beta(:) = -log(be(2:nlev)/be(1:nlay))/dtau(:)
+    lr(:) = log(be(2:nlev)/be(1:nlay))
+    beta(:) = -lr(:)/dtau(:)
 
     !! Co-albedos: extended AA for the zeroth-order level intensities, plain AA in-layer profile
     epsg(:) = sqrt((1.0_dp - w0(:))*(1.0_dp - w0(:)*hg(:)))
@@ -155,9 +166,9 @@ contains
     !! Transmission functions
     do k = 1, nlay
       do i = 1, nmu
-        TG(i,k) = exp(-epsg(k)*dtau(k)/uarr(i)) ! zeroth-order (extended AA) transmission
-        TE(i,k) = exp(-eps(k)*dtau(k)/uarr(i))  ! in-layer AA transmission
-        T(i,k) = exp(-dtau(k)/uarr(i))          ! full extinction transmission
+        TG(i,k) = exp(-epsg(k)*dtau(k)*ruarr(i)) ! zeroth-order (extended AA) transmission
+        TE(i,k) = exp(-eps(k)*dtau(k)*ruarr(i))  ! in-layer AA transmission
+        T(i,k) = exp(-dtau(k)*ruarr(i))          ! full extinction transmission
       end do
     end do
 
@@ -166,14 +177,14 @@ contains
     lw_down_g(:,1) = 0.0_dp
     do k = 1, nlay
       lw_down_g(:,k+1) = lw_down_g(:,k)*TG(:,k) + &
-        & aa_source_down(be(k), be(k+1), epsg(k)*dtau(k)/uarr(:), TG(:,k))
+        & aa_source_down(be(k), be(k+1), epsg(k)*dtau(k)*ruarr(:), TG(:,k), lr(k))
     end do
 
     ! Lower boundary condition - internal heat definition Fint = F_up - F_down (intensity units)
     lw_up_g(:,nlev) = lw_down_g(:,nlev) + be_int
     do k = nlay, 1, -1
       lw_up_g(:,k) = lw_up_g(:,k+1)*TG(:,k) + &
-        & aa_source_up(be(k), be(k+1), epsg(k)*dtau(k)/uarr(:), TG(:,k))
+        & aa_source_up(be(k), be(k+1), epsg(k)*dtau(k)*ruarr(:), TG(:,k), lr(k))
     end do
 
     !! If no scattering component in profile, the zeroth order is the solution - return
@@ -198,6 +209,11 @@ contains
     !  Zpp   = int e^{-eps(D-t)/mu_j} e^{-t/mu_i} dt/mu_i
     !  Zpm   = int e^{-eps t/mu_j}    e^{-t/mu_i} dt/mu_i
     !  Pi_up = int B(t) e^{-t/mu_i} dt/mu_i,  Pi_dn = int B(t) e^{-(D-t)/mu_i} dt/mu_i
+    ! All exponentials are products of T_i = e^{-D/mu_i}, TE_j = e^{-eps D/mu_j} and
+    ! e^{-beta D} = B_{k+1}/B_k:
+    !  Zpp = (D/mu_i)(TE_j - T_i)/((1/mu_i - eps/mu_j) D),  Zpm = (D/mu_i)(1 - T_i TE_j)/((1/mu_i + eps/mu_j) D)
+    !  Pi_up = (D/mu_i)(B_k - B_{k+1} T_i)/(D/mu_i - ln(B_{k+1}/B_k))
+    !  Pi_dn = (D/mu_i)(B_{k+1} - B_k T_i)/(D/mu_i + ln(B_{k+1}/B_k))
     Sp(:,:) = 0.0_dp
     Sm(:,:) = 0.0_dp
 
@@ -220,20 +236,42 @@ contains
 
       Ap(:) = lw_up_g(:,k+1) - cp(:)*be(k+1)  ! homogeneous amplitude at layer base
       Am(:) = lw_down_g(:,k) - cm(:)*be(k)    ! homogeneous amplitude at layer top
-      b(:) = eps(k)/uarr(:)
+      b(:) = eps(k)*ruarr(:)
 
       do i = 1, nmu
 
-        a = 1.0_dp/uarr(i)
+        a = ruarr(i)
         u = dtau(k)*a
+        Ti = T(i,k)
 
         do j = 1, nmu
-          Zpp(j) = u * exp(-min(a,b(j))*dtau(k)) * em1x(abs(a - b(j))*dtau(k))
-          Zpm(j) = u * em1x((a + b(j))*dtau(k))
+          TEj = TE(j,k)
+          x = (a - b(j))*dtau(k)
+          if (abs(x) < 1.0e-4_dp) then
+            Zpp(j) = u * merge(Ti, TEj, a <= b(j)) * em1x(abs(x))
+          else
+            Zpp(j) = u * (TEj - Ti)/x
+          end if
+          x = (a + b(j))*dtau(k)
+          if (x < 1.0e-4_dp) then
+            Zpm(j) = u * em1x(x)
+          else
+            Zpm(j) = u * (1.0_dp - Ti*TEj)/x
+          end if
         end do
 
-        Pi_up = be(k)*u*em1x((a + beta(k))*dtau(k))
-        Pi_dn = be(k+1)*u*em1x((a - beta(k))*dtau(k))
+        x = u - lr(k)   ! (1/mu_i + beta) D
+        if (abs(x) < 1.0e-4_dp) then
+          Pi_up = be(k)*u*em1x(x)
+        else
+          Pi_up = u*(be(k) - be(k+1)*Ti)/x
+        end if
+        x = u + lr(k)   ! (1/mu_i - beta) D
+        if (abs(x) < 1.0e-4_dp) then
+          Pi_dn = be(k+1)*u*em1x(x)
+        else
+          Pi_dn = u*(be(k+1) - be(k)*Ti)/x
+        end if
 
         Pp(:) = 1.0_dp + 3.0_dp*hg(k)*uarr(i)*uarr(:) ! same hemisphere
         Pm(:) = 1.0_dp - 3.0_dp*hg(k)*uarr(i)*uarr(:) ! opposite hemisphere
@@ -253,13 +291,13 @@ contains
     lw_down_g(:,1) = 0.0_dp
     do k = 1, nlay
       lw_down_g(:,k+1) = lw_down_g(:,k)*T(:,k) + &
-        & eps(k)*aa_source_down(be(k), be(k+1), dtau(k)/uarr(:), T(:,k)) + Sm(:,k)
+        & eps(k)*aa_source_down(be(k), be(k+1), dtau(k)*ruarr(:), T(:,k), lr(k)) + Sm(:,k)
     end do
 
     lw_up_g(:,nlev) = lw_down_g(:,nlev) + be_int
     do k = nlay, 1, -1
       lw_up_g(:,k) = lw_up_g(:,k+1)*T(:,k) + &
-        & eps(k)*aa_source_up(be(k), be(k+1), dtau(k)/uarr(:), T(:,k)) + Sp(:,k)
+        & eps(k)*aa_source_up(be(k), be(k+1), dtau(k)*ruarr(:), T(:,k), lr(k)) + Sp(:,k)
     end do
 
     do i = 1, nmu
@@ -274,12 +312,12 @@ contains
   end subroutine lw_VIM_E_fs
 
   !! int_0^D B(t) e^{-x(D-t)/D} x dt/D for B exponential in t between btop and bbot
-  !! (downward emission of a layer of slant optical depth x, trans = e^{-x})
-  elemental function aa_source_down(btop, bbot, x, trans) result(source)
-    real(dp), intent(in) :: btop, bbot, x, trans
+  !! (downward emission of a layer of slant optical depth x, trans = e^{-x}, lr = log(bbot/btop))
+  elemental function aa_source_down(btop, bbot, x, trans, lr) result(source)
+    real(dp), intent(in) :: btop, bbot, x, trans, lr
     real(dp) :: source
     real(dp) :: z
-    z = x + log(bbot/btop)
+    z = x + lr
     if (abs(z) < 1.0e-4_dp) then
       source = btop*trans*x*exprel(z)
     else
@@ -288,15 +326,15 @@ contains
   end function aa_source_down
 
   !! As aa_source_down for the upward emission
-  elemental function aa_source_up(btop, bbot, x, trans) result(source)
-    real(dp), intent(in) :: btop, bbot, x, trans
+  elemental function aa_source_up(btop, bbot, x, trans, lr) result(source)
+    real(dp), intent(in) :: btop, bbot, x, trans, lr
     real(dp) :: source
     real(dp) :: z
-    z = log(bbot/btop) - x
+    z = lr - x
     if (abs(z) < 1.0e-4_dp) then
       source = btop*x*exprel(z)
     else
-      source = (x/(x - log(bbot/btop)))*(btop - bbot*trans)
+      source = (x/(x - lr))*(btop - bbot*trans)
     end if
   end function aa_source_up
 

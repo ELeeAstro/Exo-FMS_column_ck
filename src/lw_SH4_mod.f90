@@ -3,6 +3,9 @@
 !                - Nov 2026 : Reviewed against PICASO, provenance and differences documented;
 !                             Hogan (2024) quadrature for the flux integration
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - beam integrals from the stored transmissions (one exponential
+!                             per layer and angle), compile-time band widths in the solver,
+!                             reciprocals, contiguous per g-ordinance inputs
 !
 ! lw: Four-stream spherical harmonic method (SH4) with multiple scattering
 !     (Rooney et al. 2024), with the level up and down fluxes found using the source
@@ -44,6 +47,10 @@ module lw_SH4_mod
   real(dp), dimension(nmu), parameter :: uarr = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp/)
   real(dp), dimension(nmu), parameter :: wuarr = 0.5_dp * w
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
+
+  !! Band widths of the four-stream matrix
+  integer, parameter :: kl = 5, ku = 5
 
   private :: lw_SH_four_stream, band_solve, e_alp, e_bet
   public :: lw_SH4
@@ -73,6 +80,8 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -93,9 +102,13 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_SH_four_stream(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        ! Contiguous copies (avoids array temporaries for the strided slices)
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_SH_four_stream(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, lw_up_g(:), lw_down_g(:))
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -123,8 +136,7 @@ contains
 
     !! Work variables
     integer :: k, m, n, r, c, row, col0, i0
-    integer, parameter :: kl = 5, ku = 5
-    real(dp) :: tautop, Btop, u, P2u, P3u
+    real(dp) :: tautop, Btop, u, ru, P2u, P3u
     real(dp), dimension(nlay) :: dtau, w0, ff, B0, B1
     real(dp), dimension(nlay) :: w_multi0, w_multi1, w_multi2, w_multi3, a0, a1, a2, a3
     real(dp), dimension(nlay) :: beta, gama, disc, lam1, lam2, e1, e2
@@ -136,7 +148,7 @@ contains
     real(dp), dimension(nlay) :: X1, X2, X3, X4
     real(dp), dimension(nlay) :: ex, ev1, od1, ev2, od2, T_up, T_dn, Ip1, Nup, Ndn, Aup, Adn
     real(dp), dimension(nlay) :: ea1, eb1, ea2, eb2
-    real(dp), dimension(nlay) :: src_up, src_dn
+    real(dp), dimension(nlay) :: src_up, src_dn, el1, el2, wa0
     real(dp), dimension(4*nlay) :: rhs, X
     real(dp), dimension(2*kl+ku+1, 4*nlay) :: Am
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
@@ -179,6 +191,11 @@ contains
 
     e1(:) = exp(-min(lam1(:)*dtau(:), 35.0_dp))
     e2(:) = exp(-min(lam2(:)*dtau(:), 35.0_dp))
+    ! uncapped exp(-lam dtau) for the beam integrals (= e1, e2 unless lam dtau > 35)
+    el1(:) = e1(:)
+    where (lam1(:)*dtau(:) > 35.0_dp) el1(:) = exp(-lam1(:)*dtau(:))
+    el2(:) = e2(:)
+    where (lam2(:)*dtau(:) > 35.0_dp) el2(:) = exp(-lam2(:)*dtau(:))
 
     !! Legendre moments of the homogeneous modes
     R1(:) = -a0(:)/lam1(:) ; R2(:) = -a0(:)/lam2(:)
@@ -262,7 +279,7 @@ contains
       rhs(row) = bsurf(r) - zup(2+r,nlay) + zup(r,nlay)
     end do
 
-    call band_solve(n, kl, ku, Am, rhs, X)
+    call band_solve(n, Am, rhs, X)
 
     !! Growing mode coefficients rescaled to their value at the layer bottom (avoids overflow)
     X1(:) = X(1:n:4)
@@ -272,6 +289,7 @@ contains
 
     !! Particular solution first moment (constant in tau)
     Ip1(:) = (1.0_dp - w0(:))/(a0(:)*a1(:))*B1(:)
+    wa0(:) = w_multi0(:)*(1.0_dp - w0(:))/a0(:)
 
     ! Zero the total flux arrays
     flx_up(:) = 0.0_dp
@@ -280,9 +298,10 @@ contains
     do m = 1, nmu
 
       u = uarr(m)
+      ru = ruarr(m)
       P2u = (3.0_dp*u**2 - 1.0_dp)/2.0_dp
       P3u = (5.0_dp*u**3 - 3.0_dp*u)/2.0_dp
-      ex(:) = exp(-dtau(:)/u)
+      ex(:) = exp(-dtau(:)*ru)
 
       !! Scattering phase coefficients split into even and odd Legendre parts,
       !! at -u (and for the growing mode of each pair) the odd part flips sign
@@ -291,16 +310,16 @@ contains
       ev2(:) = w_multi0(:) + w_multi2(:)*P2u*Q2(:)
       od2(:) = w_multi1(:)*u*R2(:) + w_multi3(:)*P3u*S2(:)
 
-      ea1(:) = e_alp(nlay, 1.0_dp/u + lam1(:), dtau(:))
-      eb1(:) = e_bet(nlay, lam1(:), u, dtau(:))
-      ea2(:) = e_alp(nlay, 1.0_dp/u + lam2(:), dtau(:))
-      eb2(:) = e_bet(nlay, lam2(:), u, dtau(:))
+      ea1(:) = e_alp(nlay, ru + lam1(:), ex(:), el1(:))
+      eb1(:) = e_bet(nlay, lam1(:), ru, dtau(:), ex(:), el1(:))
+      ea2(:) = e_alp(nlay, ru + lam2(:), ex(:), el2(:))
+      eb2(:) = e_bet(nlay, lam2(:), ru, dtau(:), ex(:), el2(:))
 
       !! Thermal particular solution integrated along the beam
       T_up(:) = u*(B0(:)*(1.0_dp - ex(:)) + B1(:)*(u - (dtau(:) + u)*ex(:)))
       T_dn(:) = u*(B0(:)*(1.0_dp - ex(:)) + B1(:)*(dtau(:) - u + u*ex(:)))
-      Nup(:) = w_multi0(:)*(1.0_dp - w0(:))/a0(:)*T_up(:) + w_multi1(:)*u*Ip1(:)*u*(1.0_dp - ex(:))
-      Ndn(:) = w_multi0(:)*(1.0_dp - w0(:))/a0(:)*T_dn(:) - w_multi1(:)*u*Ip1(:)*u*(1.0_dp - ex(:))
+      Nup(:) = wa0(:)*T_up(:) + w_multi1(:)*u*Ip1(:)*u*(1.0_dp - ex(:))
+      Ndn(:) = wa0(:)*T_dn(:) - w_multi1(:)*u*Ip1(:)*u*(1.0_dp - ex(:))
 
       !! Homogeneous solution integrated along the beam
       Aup(:) = X1(:)*(ev1(:) + od1(:))*ea1(:) + X2(:)*(ev1(:) - od1(:))*eb1(:) &
@@ -308,12 +327,12 @@ contains
       Adn(:) = X1(:)*(ev1(:) - od1(:))*eb1(:) + X2(:)*(ev1(:) + od1(:))*ea1(:) &
         & + X3(:)*(ev2(:) - od2(:))*eb2(:) + X4(:)*(ev2(:) + od2(:))*ea2(:)
 
-      src_up(:) = twopi*(w0(:)*(Aup(:) + Nup(:)) + (1.0_dp - w0(:))*T_up(:))/u
-      src_dn(:) = twopi*(w0(:)*(Adn(:) + Ndn(:)) + (1.0_dp - w0(:))*T_dn(:))/u
+      src_up(:) = twopi*ru*(w0(:)*(Aup(:) + Nup(:)) + (1.0_dp - w0(:))*T_up(:))
+      src_dn(:) = twopi*ru*(w0(:)*(Adn(:) + Ndn(:)) + (1.0_dp - w0(:))*T_dn(:))
 
       !! Perform downward loop first
       ! Top boundary condition - intensity downward from top boundary (tautop, assumed isothermal)
-      lw_down_g(1) = twopi*(1.0_dp - exp(-tautop/u))*be(1)
+      lw_down_g(1) = twopi*(1.0_dp - exp(-tautop*ru))*be(1)
       do k = 1, nlay
         lw_down_g(k+1) = lw_down_g(k)*ex(k) + src_dn(k)
       end do
@@ -331,35 +350,36 @@ contains
 
   end subroutine lw_SH_four_stream
 
-  !! int_0^dtau exp(-alp t) dt, alp > 0
-  function e_alp(nlay, alp, dtau) result(res)
+  !! int_0^dtau exp(-alp t) dt, alp = 1/u + lam > 0, from ex = exp(-dtau/u) and el = exp(-lam dtau)
+  function e_alp(nlay, alp, ex, el) result(res)
     implicit none
     integer, intent(in) :: nlay
-    real(dp), dimension(nlay), intent(in) :: alp, dtau
+    real(dp), dimension(nlay), intent(in) :: alp, ex, el
     real(dp), dimension(nlay) :: res
 
-    res(:) = (1.0_dp - exp(-alp(:)*dtau(:)))/alp(:)
+    res(:) = (1.0_dp - ex(:)*el(:))/alp(:)
 
   end function e_alp
 
-  !! (exp(-lam dtau) - exp(-dtau/u))/(1/u - lam), with the series form as 1/u - lam -> 0
-  function e_bet(nlay, lam, u, dtau) result(res)
+  !! (exp(-lam dtau) - exp(-dtau/u))/(1/u - lam), with the series form as 1/u - lam -> 0,
+  !! from ex = exp(-dtau/u) and el = exp(-lam dtau)
+  function e_bet(nlay, lam, ru, dtau, ex, el) result(res)
     implicit none
     integer, intent(in) :: nlay
-    real(dp), dimension(nlay), intent(in) :: lam, dtau
-    real(dp), intent(in) :: u
+    real(dp), dimension(nlay), intent(in) :: lam, dtau, ex, el
+    real(dp), intent(in) :: ru
     real(dp), dimension(nlay) :: res
 
     integer :: k
     real(dp) :: bet, x
 
     do k = 1, nlay
-      bet = 1.0_dp/u - lam(k)
+      bet = ru - lam(k)
       x = bet*dtau(k)
       if (abs(x) < 1.0e-6_dp) then
-        res(k) = dtau(k)*exp(-dtau(k)/u)*(1.0_dp + x/2.0_dp + x*x/6.0_dp)
+        res(k) = dtau(k)*ex(k)*(1.0_dp + x/2.0_dp + x*x/6.0_dp)
       else
-        res(k) = (exp(-lam(k)*dtau(k)) - exp(-dtau(k)/u))/bet
+        res(k) = (el(k) - ex(k))/bet
       end if
     end do
 
@@ -367,10 +387,11 @@ contains
 
   !! Banded Gaussian elimination with partial pivoting (as LAPACK dgbsv)
   !! A(i,j) = ab(kl+ku+1+i-j,j), the top kl rows of ab are fill-in workspace
-  subroutine band_solve(n, kl, ku, ab, b, x)
+  !! (band widths kl, ku are module parameters, so the loop bounds are known at compile time)
+  subroutine band_solve(n, ab, b, x)
     implicit none
 
-    integer, intent(in) :: n, kl, ku
+    integer, intent(in) :: n
     real(dp), dimension(2*kl+ku+1, n), intent(inout) :: ab
     real(dp), dimension(n), intent(inout) :: b
     real(dp), dimension(n), intent(out) :: x

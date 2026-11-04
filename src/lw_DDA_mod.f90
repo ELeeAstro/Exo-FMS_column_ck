@@ -1,6 +1,10 @@
 !!!
 ! Elspeth KH Lee - Nov 2026 : Initial version
 !                - Nov 2026 : Converted to corr-k (band + g-ordinance loops) from Exo-FMS_column_semigrey
+!                - Nov 2026 : Optimisations - quadrature tables once per call, even/odd Legendre sums,
+!                             sum/difference layer mode outputs, angle independent source function
+!                             terms once per layer, thin-layer kernels from the transmissions,
+!                             reciprocal angles, contiguous per g-ordinance inputs
 !
 ! lw: Four-stream discrete ordinates adding method (4DDA; Zhang et al. 2013, J. Atmos. Sci.;
 !     infrared adding following the Zhang group's four-stream infrared work), thermal emission only.
@@ -68,6 +72,7 @@ module lw_DDA_mod
   !! Double-Gauss nodes and weights on [0,1] (sum(w) = 1, sum(w*mu) = 1/2)
   real(dp), dimension(nmu), parameter :: uarr = (/0.2113248654051871_dp, 0.7886751345948129_dp/)
   real(dp), dimension(nmu), parameter :: w = (/0.5_dp, 0.5_dp/)
+  real(dp), dimension(nmu), parameter :: ruarr = 1.0_dp/uarr
 
   !! Single scattering albedo cap and minimum layer optical depth
   real(dp), parameter :: w_max = 1.0_dp - 1.0e-6_dp
@@ -79,6 +84,7 @@ module lw_DDA_mod
   integer, parameter :: nh = 4
   real(dp), dimension(nh), parameter :: uh = (/0.0454586727_dp, 0.2322334416_dp, 0.5740198775_dp, 0.9030775973_dp/)
   real(dp), dimension(nh), parameter :: wh = (/0.0092068785_dp, 0.1285704278_dp, 0.4323381850_dp, 0.4298845087_dp/)
+  real(dp), dimension(nh), parameter :: ruh = 1.0_dp/uh
 
   private :: lw_DDA_method, layer_RT, inv2, em1x
   public :: lw_DDA
@@ -108,6 +114,44 @@ contains
     real(dp), dimension(nb,nlev) :: be
     real(dp), dimension(nb) :: be_int
     real(dp), dimension(nlev) :: lw_up_g, lw_down_g
+    real(dp), dimension(nlev) :: be_b, tau_g
+    real(dp), dimension(nlay) :: ssa_g, gg_g
+
+    !! Quadrature constants (same for every band and g-ordinate)
+    integer :: l, i, j, h
+    real(dp), dimension(nmom, nmu) :: Plg
+    real(dp), dimension(nmom) :: c2l, Ph
+    real(dp), dimension(nmom,nmu,nmu) :: PP
+    real(dp), dimension(nmom,nmu,nh) :: HPs
+
+    !! Legendre polynomials P_l(mu_i), l = 0..3 (stored at l+1)
+    Plg(1,:) = 1.0_dp
+    Plg(2,:) = uarr(:)
+    Plg(3,:) = 0.5_dp*(3.0_dp*uarr(:)**2 - 1.0_dp)
+    Plg(4,:) = 0.5_dp*(5.0_dp*uarr(:)**3 - 3.0_dp*uarr(:))
+
+    !! (2l+1) factors of the phase function expansion
+    do l = 0, nmom-1
+      c2l(l+1) = real(2*l+1,dp)
+    end do
+
+    !! Quadrature-weighted Legendre products, PP(l,i,j) = w_j (2l+1) P_l(mu_i) P_l(mu_j)/2
+    do j = 1, nmu
+      do i = 1, nmu
+        PP(:,i,j) = 0.5_dp*w(j)*c2l(:)*Plg(:,i)*Plg(:,j)
+      end do
+    end do
+
+    !! Source function technique: the same products with P_l at the Hogan angles
+    do h = 1, nh
+      Ph(1) = 1.0_dp
+      Ph(2) = uh(h)
+      Ph(3) = 0.5_dp*(3.0_dp*uh(h)**2 - 1.0_dp)
+      Ph(4) = 0.5_dp*(5.0_dp*uh(h)**3 - 3.0_dp*uh(h))
+      do j = 1, nmu
+        HPs(:,j,h) = 0.5_dp*w(j)*c2l(:)*Ph(:)*Plg(:,j)
+      end do
+    end do
 
     !! Use WENO4 method to (smoothly) interpolate layers to levels, in ln p
     Te(:) = interpolate_weno4(log(pe), log(pl), Tl, .False.)
@@ -128,9 +172,12 @@ contains
     lw_up(:) = 0.0_dp
     lw_down(:) = 0.0_dp
     do b = 1, nb
+      be_b(:) = be(b,:)
       do g = 1, ng
-        call lw_DDA_method(nlay, nlev, be(b,:), be_int(b), tau_e(g,b,:), ssa(g,b,:), gg(g,b,:), &
-          & lw_up_g(:), lw_down_g(:))
+        tau_g(:) = tau_e(g,b,:)
+        ssa_g(:) = ssa(g,b,:)
+        gg_g(:) = gg(g,b,:)
+        call lw_DDA_method(nlay, nlev, be_b, be_int(b), tau_g, ssa_g, gg_g, PP, HPs, lw_up_g, lw_down_g)
         lw_up(:) = lw_up(:) + lw_up_g(:) * gw(g)
         lw_down(:) = lw_down(:) + lw_down_g(:) * gw(g)
       end do
@@ -144,7 +191,7 @@ contains
 
   end subroutine lw_DDA
 
-  subroutine lw_DDA_method(nlay, nlev, be, be_int, tau_in, w_in, g_in, flx_up, flx_down)
+  subroutine lw_DDA_method(nlay, nlev, be, be_int, tau_in, w_in, g_in, PP, HPs, flx_up, flx_down)
     implicit none
 
     !! Input variables
@@ -152,17 +199,18 @@ contains
     real(dp), dimension(nlev), intent(in) :: be, tau_in
     real(dp), dimension(nlay), intent(in) :: w_in, g_in
     real(dp), intent(in) :: be_int
+    real(dp), dimension(nmom,nmu,nmu), intent(in) :: PP
+    real(dp), dimension(nmom,nmu,nh), intent(in) :: HPs
 
     !! Output variables
     real(dp), dimension(nlev), intent(out) :: flx_up, flx_down
 
     !! Work variables and arrays
     integer :: k, l, i, j
-    real(dp), dimension(nmom, nmu) :: Pl
-    real(dp), dimension(nmom) :: chi, c2l, sgn
-    real(dp), dimension(nmom,nmu,nmu) :: PP
+    real(dp), dimension(nmom) :: chi
     real(dp), dimension(nlay) :: dtau, w0
     real(dp), dimension(nmu,nmu) :: Ws, Wd, Imat, Mi
+    real(dp) :: pe_, po_
     real(dp), dimension(nmu,nmu,nlay) :: R, T, Md
     real(dp), dimension(nmu,nlay) :: Eu, Ed
     real(dp), dimension(nmu,nmu,nlev) :: Rbot
@@ -173,35 +221,14 @@ contains
     integer :: h, m
     real(dp), dimension(nmom, nlay) :: chiL
     real(dp), dimension(nmu, nlay) :: kL, exL, dL
-    real(dp), dimension(nmu, nmu, nlay) :: GpL, GmL, M1L, M2L
+    real(dp), dimension(nmu, nmu, nlay) :: SGL, DGL, M1L, M2L
     real(dp), dimension(nmu, nlev) :: IdnL, IupL
-    real(dp), dimension(nmu) :: uu, ss, Ac, Cc, hs, hd, alp_p, bet_p, alp_m, bet_m, Kdec, Kgro
-    real(dp), dimension(nmom) :: Ph
-    real(dp), dimension(nmom, nmu, nh) :: HPs, HPd
-    real(dp) :: x
+    real(dp), dimension(nmu) :: uu, ss, Ac, Cc, he, ho, alp_p, bet_p, alp_m, bet_m, Kdec, Kgro
+    real(dp) :: x, ga, gb, tu, a
     real(dp), dimension(nlev) :: Ihd, Ihu
-    real(dp), dimension(nlay) :: Th, up_src, dn_src
+    real(dp), dimension(nh, nlay) :: Th, up_src, dn_src
     real(dp) :: B1, cb, cd, c0p, c0m, c1, Ti, lin1
     real(dp) :: f
-
-    !! Legendre polynomials P_l(mu_i), l = 0..3 (stored at l+1)
-    Pl(1,:) = 1.0_dp
-    Pl(2,:) = uarr(:)
-    Pl(3,:) = 0.5_dp*(3.0_dp*uarr(:)**2 - 1.0_dp)
-    Pl(4,:) = 0.5_dp*(5.0_dp*uarr(:)**3 - 3.0_dp*uarr(:))
-
-    !! (2l+1) and (-1)^l factors of the phase function expansion
-    do l = 0, nmom-1
-      c2l(l+1) = real(2*l+1,dp)
-      sgn(l+1) = (-1.0_dp)**l
-    end do
-
-    !! Quadrature-weighted Legendre products, PP(l,i,j) = w_j (2l+1) P_l(mu_i) P_l(mu_j)/2
-    do j = 1, nmu
-      do i = 1, nmu
-        PP(:,i,j) = 0.5_dp*w(j)*c2l(:)*Pl(:,i)*Pl(:,j)
-      end do
-    end do
 
     Imat(:,:) = 0.0_dp
     do i = 1, nmu
@@ -228,16 +255,19 @@ contains
 
       !! Quadrature-weighted phase matrices, normalised so (1/2) int P dmu' = 1:
       !! Ws(i,j) = w_j P(mu_i, mu_j)/2 (same hemisphere), Wd(i,j) = w_j P(mu_i,-mu_j)/2 (opposite)
+      !! P_l(-mu) = (-1)^l P_l(mu): Ws = even + odd l terms, Wd = even - odd l terms
       do j = 1, nmu
         do i = 1, nmu
-          Ws(i,j) = sum(chi(:)*PP(:,i,j))
-          Wd(i,j) = sum(sgn(:)*chi(:)*PP(:,i,j))
+          pe_ = sum(chi(1:nmom:2)*PP(1:nmom:2,i,j))
+          po_ = sum(chi(2:nmom:2)*PP(2:nmom:2,i,j))
+          Ws(i,j) = pe_ + po_
+          Wd(i,j) = pe_ - po_
         end do
       end do
 
       if (use_sft) chiL(:,k) = chi(:)
       call layer_RT(dtau(k), w0(k), be(k), be(k+1), Ws, Wd, Imat, R(:,:,k), T(:,:,k), Eu(:,k), Ed(:,k), &
-        & kL(:,k), exL(:,k), dL(:,k), GpL(:,:,k), GmL(:,:,k), M1L(:,:,k), M2L(:,:,k))
+        & kL(:,k), exL(:,k), dL(:,k), SGL(:,:,k), DGL(:,:,k), M1L(:,:,k), M2L(:,:,k))
 
     end do
 
@@ -260,11 +290,12 @@ contains
         Idn(:) = matmul(Md(:,:,k-1), matmul(T(:,:,k-1), Idn(:)) + Ed(:,k-1) + matmul(R(:,:,k-1), Sup(:,k)))
       end if
       Iup(:) = Sup(:,k) + matmul(Rbot(:,:,k), Idn(:))
-      flx_down(k) = 2.0_dp*pi*sum(w(:)*uarr(:)*Idn(:))
-      flx_up(k) = 2.0_dp*pi*sum(w(:)*uarr(:)*Iup(:))
       if (use_sft) then
         IdnL(:,k) = Idn(:)
         IupL(:,k) = Iup(:)
+      else
+        flx_down(k) = 2.0_dp*pi*sum(w(:)*uarr(:)*Idn(:))
+        flx_up(k) = 2.0_dp*pi*sum(w(:)*uarr(:)*Iup(:))
       end if
     end do
 
@@ -272,69 +303,72 @@ contains
 
     !! Mode coefficients for the actual boundary intensities (I-(0) = IdnL(k), I+(D) = IupL(k+1)):
     !! u = A + C = M1 [a + b - (B_top + B_bot)],  s = A - C = M2 [a - b - (B_top - B_bot) + 2 d B1]
-    do h = 1, nh
-      Ph(1) = 1.0_dp
-      Ph(2) = uh(h)
-      Ph(3) = 0.5_dp*(3.0_dp*uh(h)**2 - 1.0_dp)
-      Ph(4) = 0.5_dp*(5.0_dp*uh(h)**3 - 3.0_dp*uh(h))
-      do j = 1, nmu
-        HPs(:,j,h) = 0.5_dp*w(j)*c2l(:)*Ph(:)*Pl(:,j)
-        HPd(:,j,h) = sgn(:)*HPs(:,j,h)
-      end do
-    end do
-    flx_down(:) = 0.0_dp
-    flx_up(:) = 0.0_dp
-    do h = 1, nh
-      do k = 1, nlay
-        if (dtau(k) <= dtau_min) then
-          Th(k) = 1.0_dp
-          up_src(k) = 0.0_dp
-          dn_src(k) = 0.0_dp
-          cycle
-        end if
-        B1 = (be(k+1) - be(k))/dtau(k)
-        uu(:) = matmul(M1L(:,:,k), IdnL(:,k) + IupL(:,k+1) - (be(k) + be(k+1)))
-        ss(:) = matmul(M2L(:,:,k), IdnL(:,k) - IupL(:,k+1) - (be(k) - be(k+1)) + 2.0_dp*dL(:,k)*B1)
-        Ac(:) = 0.5_dp*(uu(:) + ss(:))
-        Cc(:) = 0.5_dp*(uu(:) - ss(:))
+    !! (angle independent - once per layer), then the source terms of each Hogan angle
+    do k = 1, nlay
+      if (dtau(k) <= dtau_min) then
+        Th(:,k) = 1.0_dp
+        up_src(:,k) = 0.0_dp
+        dn_src(:,k) = 0.0_dp
+        cycle
+      end if
+      B1 = (be(k+1) - be(k))/dtau(k)
+      uu(:) = matmul(M1L(:,:,k), IdnL(:,k) + IupL(:,k+1) - (be(k) + be(k+1)))
+      ss(:) = matmul(M2L(:,:,k), IdnL(:,k) - IupL(:,k+1) - (be(k) - be(k+1)) + 2.0_dp*dL(:,k)*B1)
+      Ac(:) = 0.5_dp*w0(k)*(uu(:) + ss(:))
+      Cc(:) = 0.5_dp*w0(k)*(uu(:) - ss(:))
+      do h = 1, nh
+        !! Phase function projections onto +/-uh, split into even (he) and odd (ho) Legendre terms:
+        !! hs = he + ho (same hemisphere), hd = he - ho (opposite)
         do j = 1, nmu
-          hs(j) = sum(chiL(:,k)*HPs(:,j,h))
-          hd(j) = sum(chiL(:,k)*HPd(:,j,h))
+          he(j) = sum(chiL(1:nmom:2,k)*HPs(1:nmom:2,j,h))
+          ho(j) = sum(chiL(2:nmom:2,k)*HPs(2:nmom:2,j,h))
         end do
-        cb = (1.0_dp - w0(k)) + w0(k)*sum(hs(:) + hd(:))
-        cd = w0(k)*sum((hs(:) - hd(:))*dL(:,k))*B1
+        cb = (1.0_dp - w0(k)) + 2.0_dp*w0(k)*sum(he(:))
+        cd = 2.0_dp*w0(k)*sum(ho(:)*dL(:,k))*B1
         c0p = cb*be(k) + cd
         c0m = cb*be(k) - cd
         c1 = cb*B1
+        !! Mode amplitudes of the source at +/-uh, with SG = Gp + Gm and DG = Gp - Gm:
+        !! hs.Gp + hd.Gm = he.SG + ho.DG,  hs.Gm + hd.Gp = he.SG - ho.DG
         do m = 1, nmu
-          alp_p(m) = w0(k)*Ac(m)*(sum(hs(:)*GpL(:,m,k)) + sum(hd(:)*GmL(:,m,k)))
-          bet_p(m) = w0(k)*Cc(m)*(sum(hs(:)*GmL(:,m,k)) + sum(hd(:)*GpL(:,m,k)))
-          alp_m(m) = w0(k)*Ac(m)*(sum(hd(:)*GpL(:,m,k)) + sum(hs(:)*GmL(:,m,k)))
-          bet_m(m) = w0(k)*Cc(m)*(sum(hd(:)*GmL(:,m,k)) + sum(hs(:)*GpL(:,m,k)))
+          ga = sum(he(:)*SGL(:,m,k))
+          gb = sum(ho(:)*DGL(:,m,k))
+          alp_p(m) = Ac(m)*(ga + gb)
+          bet_p(m) = Cc(m)*(ga - gb)
+          alp_m(m) = Ac(m)*(ga - gb)
+          bet_m(m) = Cc(m)*(ga + gb)
         end do
-        Ti = exp(-dtau(k)/uh(h))
-        Th(k) = Ti
+        tu = dtau(k)*ruh(h)
+        Ti = exp(-tu)
+        Th(h,k) = Ti
         do m = 1, nmu
-          Kdec(m) = (1.0_dp - Ti*exL(m,k))/(1.0_dp + kL(m,k)*uh(h))
-          x = kL(m,k)*uh(h) - 1.0_dp
-          if (abs(x)*dtau(k)/uh(h) > 1.0e-3_dp) then
+          a = kL(m,k)*uh(h)
+          Kdec(m) = (1.0_dp - Ti*exL(m,k))/(1.0_dp + a)
+          x = a - 1.0_dp
+          if (abs(x)*tu > 1.0e-3_dp) then
             Kgro(m) = (Ti - exL(m,k))/x     ! reuses e^{-D/mu} and e^{-k D}, no new exponential
           else
-            Kgro(m) = (dtau(k)/uh(h))*exp(-min(kL(m,k), 1.0_dp/uh(h))*dtau(k)) &
-              & * em1x(abs(kL(m,k) - 1.0_dp/uh(h))*dtau(k))
+            !! exp(-min(k, 1/uh) dtau) is Ti or e^{-k dtau}; em1x argument |x| tu <= 1e-3 (series)
+            Kgro(m) = tu*merge(Ti, exL(m,k), kL(m,k) >= ruh(h)) * em1x(abs(x)*tu)
           end if
         end do
         lin1 = uh(h)*(1.0_dp - Ti) - dtau(k)*Ti
-        up_src(k) = c0p*(1.0_dp - Ti) + c1*lin1 + sum(alp_p(:)*Kdec(:)) + sum(bet_p(:)*Kgro(:))
-        dn_src(k) = (c0m + c1*dtau(k))*(1.0_dp - Ti) - c1*lin1 + sum(alp_m(:)*Kgro(:)) + sum(bet_m(:)*Kdec(:))
+        up_src(h,k) = c0p*(1.0_dp - Ti) + c1*lin1 + sum(alp_p(:)*Kdec(:)) + sum(bet_p(:)*Kgro(:))
+        dn_src(h,k) = (c0m + c1*dtau(k))*(1.0_dp - Ti) - c1*lin1 + sum(alp_m(:)*Kgro(:)) + sum(bet_m(:)*Kdec(:))
       end do
+    end do
+
+    !! Formal solution along each Hogan angle
+    flx_down(:) = 0.0_dp
+    flx_up(:) = 0.0_dp
+    do h = 1, nh
       Ihd(1) = 0.0_dp
       do k = 1, nlay
-        Ihd(k+1) = Ihd(k)*Th(k) + dn_src(k)
+        Ihd(k+1) = Ihd(k)*Th(h,k) + dn_src(h,k)
       end do
       Ihu(nlev) = Ihd(nlev) + be_int
       do k = nlay, 1, -1
-        Ihu(k) = Ihu(k+1)*Th(k) + up_src(k)
+        Ihu(k) = Ihu(k+1)*Th(h,k) + up_src(h,k)
       end do
       flx_down(:) = flx_down(:) + pi*wh(h)*Ihd(:)
       flx_up(:) = flx_up(:) + pi*wh(h)*Ihu(:)
@@ -344,7 +378,7 @@ contains
 
   !! Analytic 4-stream discrete ordinates solution of one homogeneous layer:
   !! R, T (2x2, incident from either side) and thermal sources Eu (up, top), Ed (down, bottom)
-  subroutine layer_RT(dtau, w0, B_top, B_bot, Ws, Wd, Imat, R, T, Eu, Ed, kko, exo, dout, Gpo, Gmo, M1o, M2o)
+  subroutine layer_RT(dtau, w0, B_top, B_bot, Ws, Wd, Imat, R, T, Eu, Ed, kko, exo, dout, SGo, DGo, M1o, M2o)
     implicit none
 
     real(dp), intent(in) :: dtau, w0, B_top, B_bot
@@ -352,7 +386,7 @@ contains
     real(dp), dimension(nmu,nmu), intent(out) :: R, T
     real(dp), dimension(nmu), intent(out) :: Eu, Ed
     real(dp), dimension(nmu), intent(out) :: kko, exo, dout
-    real(dp), dimension(nmu,nmu), intent(out) :: Gpo, Gmo, M1o, M2o
+    real(dp), dimension(nmu,nmu), intent(out) :: SGo, DGo, M1o, M2o
 
     integer :: i, m
     real(dp), dimension(nmu,nmu) :: al, bt, amb, apb, Q, Gp, Gm, GmE, GpE, P1, P2
@@ -366,14 +400,14 @@ contains
       Eu(:) = 0.0_dp
       Ed(:) = 0.0_dp
       kko(:) = 0.0_dp ; exo(:) = 1.0_dp ; dout(:) = 0.0_dp
-      Gpo(:,:) = 0.0_dp ; Gmo(:,:) = 0.0_dp ; M1o(:,:) = 0.0_dp ; M2o(:,:) = 0.0_dp
+      SGo(:,:) = 0.0_dp ; DGo(:,:) = 0.0_dp ; M1o(:,:) = 0.0_dp ; M2o(:,:) = 0.0_dp
       return
     end if
 
     !! mu dI+/dtau = alpha I+ - beta I-,  dI-/dtau = beta I+ - alpha I-  (per unit tau, divided by mu)
     do i = 1, nmu
-      al(i,:) = (Imat(i,:) - w0*Ws(i,:))/uarr(i)
-      bt(i,:) = w0*Wd(i,:)/uarr(i)
+      al(i,:) = (Imat(i,:) - w0*Ws(i,:))*ruarr(i)
+      bt(i,:) = w0*Wd(i,:)*ruarr(i)
     end do
     amb(:,:) = al(:,:) - bt(:,:)
     apb(:,:) = al(:,:) + bt(:,:)
@@ -395,11 +429,11 @@ contains
       v1(:) = (/Q(1,2), lam - Q(1,1)/)
       v2(:) = (/lam - Q(2,2), Q(2,1)/)
       if (sum(v1**2) >= sum(v2**2)) then
-        X(:) = v1(:)/sqrt(sum(v1**2))
+        X(:) = v1(:)*(1.0_dp/sqrt(sum(v1**2)))
       else
-        X(:) = v2(:)/sqrt(sum(v2**2))
+        X(:) = v2(:)*(1.0_dp/sqrt(sum(v2**2)))
       end if
-      Y(:) = matmul(amb(:,:), X(:))/kk(m)
+      Y(:) = matmul(amb(:,:), X(:))*(1.0_dp/kk(m))
       Gp(:,m) = 0.5_dp*(X(:) - Y(:))
       Gm(:,m) = 0.5_dp*(X(:) + Y(:))
       ex(m) = exp(-kk(m)*dtau)
@@ -424,7 +458,7 @@ contains
     P1(:,:) = matmul(Gp(:,:) + GmE(:,:), M1o(:,:))   ! R + T
     P2(:,:) = matmul(Gp(:,:) - GmE(:,:), M2o(:,:))   ! R - T
     if (use_sft) then
-      kko(:) = kk(:) ; exo(:) = ex(:) ; dout(:) = d(:) ; Gpo(:,:) = Gp(:,:) ; Gmo(:,:) = Gm(:,:)
+      kko(:) = kk(:) ; exo(:) = ex(:) ; dout(:) = d(:) ; SGo(:,:) = Gp(:,:) + Gm(:,:) ; DGo(:,:) = Gp(:,:) - Gm(:,:)
     end if
 
     R(:,:) = 0.5_dp*(P1(:,:) + P2(:,:))
@@ -445,8 +479,8 @@ contains
     implicit none
     real(dp), intent(in) :: x
     real(dp) :: r
-    if (x < 1.0e-4_dp) then
-      r = 1.0_dp - 0.5_dp*x + x*x/6.0_dp
+    if (x < 1.0e-3_dp) then
+      r = 1.0_dp - x*(0.5_dp - x*(1.0_dp/6.0_dp - x/24.0_dp))
     else
       r = (1.0_dp - exp(-x))/x
     end if
@@ -458,13 +492,13 @@ contains
 
     real(dp), dimension(2,2), intent(in) :: A
     real(dp), dimension(2,2) :: B
-    real(dp) :: det
+    real(dp) :: rdet
 
-    det = A(1,1)*A(2,2) - A(1,2)*A(2,1)
-    B(1,1) = A(2,2)/det
-    B(1,2) = -A(1,2)/det
-    B(2,1) = -A(2,1)/det
-    B(2,2) = A(1,1)/det
+    rdet = 1.0_dp/(A(1,1)*A(2,2) - A(1,2)*A(2,1))
+    B(1,1) = A(2,2)*rdet
+    B(1,2) = -A(1,2)*rdet
+    B(2,1) = -A(2,1)*rdet
+    B(2,2) = A(1,1)*rdet
 
   end function inv2
 
